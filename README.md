@@ -74,9 +74,27 @@ double-effect would boot and destroy a whole `Phaser.Game` on every battle mount
 
 ## Online PvP (Supabase)
 
-Pick a class, then **Create online room** (you get a 5-letter code to send a friend) or **Join
-with code**. Sign-in is anonymous and kept per browser tab, so two tabs on one machine can play
-each other for testing.
+Log in (or sign up), pick a class and a deck, then **Create online room** (you get a 5-letter
+code to send a friend) or **Join with code**. The login is kept per browser tab, so two tabs on
+one machine can log in to two different accounts and play each other for testing.
+
+### Accounts and decks
+
+- **Accounts** are Supabase Auth email + password (`src/online/authApi.ts`, `src/components/AuthScreen.tsx`).
+  The username is stored in the user's metadata and is only for display. When Supabase has
+  **Confirm email** on (the default), a new account has to click the emailed link before logging
+  in; turn it off under Authentication → Sign In / Providers → Email for quicker testing.
+- **Decks**: every class has its **starter deck** (`class_deck_cards`), which every player has
+  and can't edit. Each player can also build **up to 3 custom decks per class** in the deck
+  builder (**Edit decks** on the class-select screen). A custom deck uses the class's own cards
+  (the ones in its starter deck), 12–24 cards, at most 4 copies of each — see `DECK_RULES` in
+  `src/model/decks.ts`.
+- Custom decks live in the `decks` table (`supabase/migrations/*_player_decks.sql`): each player
+  can read/write only their own rows, and a trigger rejects a 4th deck for the same class. The
+  deck you pick on the class-select screen is used for vs-CPU and online matches; for online
+  matches the `game` function re-checks it with `validateDeckList()` and copies it into
+  `match_decks` (server-only), so editing a deck mid-match changes nothing and the opponent
+  never sees your list.
 
 The same `src/model/` engine runs on the server instead of in the browser:
 
@@ -88,7 +106,7 @@ The same `src/model/` engine runs on the server instead of in the browser:
   `match_secrets` (both decks/hands and the pending moves) has no RLS policies at all, so only
   the Edge Function can read it. That's what keeps a player from reading the other side's hand or
   move out of the page.
-- `src/online/matchApi.ts` — the browser side: sign-in, calls to the function, and Realtime
+- `src/online/matchApi.ts` — the browser side: calls to the function, and Realtime
   updates (plus a slow poll as a fallback).
 - `.env` — the project URL and *publishable* key. Both are public by design and committed.
   Never put the secret / service_role key there.
@@ -124,8 +142,8 @@ npm run db:push      # link the sandbox project and apply new migrations there
 npm run fn:deploy    # redeploy the server on the sandbox project
 ```
 
-Both projects need **Authentication → Sign In / Providers → Allow anonymous sign-ins** turned
-on in the Supabase dashboard (a one-time setting).
+Both projects need **Authentication → Sign In / Providers → Email** enabled in the Supabase
+dashboard (it is by default). Anonymous sign-ins are no longer used.
 
 ### Sandbox project (separate dev database)
 

@@ -196,6 +196,7 @@ function ultimateName(classDef: ClassDef): string {
 
 export interface BattleSceneData {
   playerClass: ClassDef;
+  playerDeck?: Card[] | null; // a custom deck (decks.ts); null/absent = starter deck
   onExit?: (() => void) | null;
 }
 
@@ -295,7 +296,7 @@ export class BattleScene extends Phaser.Scene {
   setupBattle(data: BattleSceneData): Battle {
     const playerClass = data.playerClass;
     const cpuClass = allClasses().find((c) => c.id !== playerClass.id) ?? playerClass;
-    return createBattle(playerClass, cpuClass);
+    return createBattle(playerClass, cpuClass, { playerDeck: data.playerDeck ?? null });
   }
 
   get playerLabel(): string {

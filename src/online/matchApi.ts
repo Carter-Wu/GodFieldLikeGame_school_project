@@ -3,8 +3,8 @@
 // can only READ -- its match row and its own hand, as the RLS policies in
 // supabase/migrations/*_online_pvp.sql allow.
 //
-// Sign-in is anonymous (no account needed), one player per browser tab --
-// see supabaseClient.ts.
+// Players need an account (email + password, authApi.ts); the login is kept
+// per browser tab -- see supabaseClient.ts.
 
 import { deserializeFighter, type SerializedFighter } from "../model/serialize.ts";
 import type { Action, Battle, ClientAction, Fighter } from "../model/engine.ts";
@@ -57,16 +57,11 @@ export interface BattleView {
 // log.
 const POLL_INTERVAL_MS = 15000;
 
-// Returns the signed-in user's id, signing in anonymously first if needed.
+// Returns the logged-in user's id (accounts: see authApi.ts).
 export async function ensureSignedIn(): Promise<string> {
   const { data } = await supabase.auth.getSession();
-  if (data.session) return data.session.user.id;
-
-  const { data: signedIn, error } = await supabase.auth.signInAnonymously();
-  if (error) {
-    throw new Error(`Couldn't sign in (${error.message}). Is "Allow anonymous sign-ins" on in the Supabase dashboard?`);
-  }
-  return signedIn.user!.id;
+  if (data.session && !data.session.user.is_anonymous) return data.session.user.id;
+  throw new Error("Log in to play online.");
 }
 
 async function callGame<T>(body: Record<string, unknown>): Promise<T> {
@@ -86,10 +81,11 @@ async function callGame<T>(body: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
-export const createMatch = (classId: string): Promise<{ id: string; code: string }> =>
-  callGame({ op: "create", classId });
-export const joinMatch = (code: string, classId: string): Promise<{ id: string }> =>
-  callGame({ op: "join", code, classId });
+// deckId: one of the player's saved decks (decksApi.ts); null = starter deck.
+export const createMatch = (classId: string, deckId: string | null): Promise<{ id: string; code: string }> =>
+  callGame({ op: "create", classId, deckId });
+export const joinMatch = (code: string, classId: string, deckId: string | null): Promise<{ id: string }> =>
+  callGame({ op: "join", code, classId, deckId });
 export const leaveMatch = (matchId: string): Promise<Record<string, never>> =>
   callGame({ op: "leave", matchId });
 

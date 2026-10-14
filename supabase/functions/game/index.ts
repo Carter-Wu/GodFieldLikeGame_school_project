@@ -8,8 +8,10 @@
 // vs-CPU play, imported straight from the repo.
 //
 // POST body is { op, ...args }:
-//   { op: "create", classId }            -> { id, code }
-//   { op: "join", code, classId }        -> { id }
+//   { op: "create", classId, deckId? }   -> { id, code }
+//   { op: "join", code, classId, deckId? } -> { id }
+//       deckId: one of the caller's own `decks` rows for that class;
+//       omitted/null = the class's starter deck.
 //   { op: "submit", matchId, action }    -> { resolved }
 //       action: { kind: "card", cardId } | { kind: "ultimate" }
 //   { op: "leave", matchId }             -> {}
@@ -27,6 +29,8 @@ import {
 } from "../../../src/model/engine.ts";
 import { findClassById, loadCatalog } from "../../../src/model/catalog.ts";
 import { serializeBattle, deserializeBattle, publicFighters } from "../../../src/model/serialize.ts";
+import { buildDeckFromList, validateDeckList, type DeckListEntry } from "../../../src/model/decks.ts";
+import type { ClassDef } from "../../../src/model/classes.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -92,6 +96,7 @@ async function authenticate(req: Request): Promise<string> {
   if (!token) throw new HttpError(401, "Not signed in");
   const { data, error } = await admin.auth.getUser(token);
   if (error || !data.user) throw new HttpError(401, "Not signed in");
+  if (data.user.is_anonymous) throw new HttpError(401, "Log in to an account to play online");
   return data.user.id;
 }
 
@@ -108,6 +113,21 @@ function randomCode() {
   return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
 }
 
+// The deck list the player picked, checked against the deck rules -- the
+// decks table is written from the browser, so it's never trusted as-is.
+// null = starter deck.
+async function loadDeckList(userId: string, classDef: ClassDef, deckId: unknown): Promise<DeckListEntry[] | null> {
+  if (deckId == null || deckId === "") return null;
+  const deck = check(
+    await admin.from("decks").select("class_id, cards").eq("id", String(deckId)).eq("user_id", userId).maybeSingle()
+  );
+  if (!deck) throw new HttpError(404, "Deck not found");
+  if (deck.class_id !== classDef.id) throw new HttpError(400, `That deck isn't a ${classDef.name} deck`);
+  const problem = validateDeckList(classDef, deck.cards);
+  if (problem) throw new HttpError(400, `That deck can't be used: ${problem}`);
+  return deck.cards as DeckListEntry[];
+}
+
 // Client action -> engine action for this fighter, or null if the fighter
 // can't actually play it (card not in hand, ultimate not charged).
 function toEngineAction(fighter: Fighter, action: ClientAction | null | undefined): Action | null {
@@ -118,23 +138,29 @@ function toEngineAction(fighter: Fighter, action: ClientAction | null | undefine
 
 // --- ops -----------------------------------------------------------------
 
-async function createMatch(userId: string, body: { classId?: unknown }) {
+async function createMatch(userId: string, body: { classId?: unknown; deckId?: unknown }) {
   const classDef = parseClass(body.classId);
+  const deckList = await loadDeckList(userId, classDef, body.deckId);
   for (let attempt = 0; attempt < 5; attempt++) {
     const { data, error } = await admin
       .from("matches")
       .insert({ code: randomCode(), p1: userId, p1_class: classDef.id })
       .select("id, code")
       .single();
-    if (!error) return data;
+    if (!error) {
+      // Snapshot the deck now, so editing it while waiting doesn't change the match.
+      if (deckList) check(await admin.from("match_decks").insert({ match_id: data.id, player: userId, cards: deckList }));
+      return data;
+    }
     if (error.code !== "23505") throw new Error(error.message); // 23505 = code collision, retry
   }
   throw new Error("Couldn't generate a free room code");
 }
 
-async function joinMatch(userId: string, body: { code?: unknown; classId?: unknown }) {
+async function joinMatch(userId: string, body: { code?: unknown; classId?: unknown; deckId?: unknown }) {
   const code = String(body.code ?? "").trim().toUpperCase();
   const classDef = parseClass(body.classId);
+  const deckList = await loadDeckList(userId, classDef, body.deckId);
 
   const existing = check(await admin.from("matches").select("id, p1").eq("code", code).maybeSingle());
   if (!existing) throw new HttpError(404, `No room with code ${code}`);
@@ -159,7 +185,15 @@ async function joinMatch(userId: string, body: { code?: unknown; classId?: unkno
   const p1Class = findClassById(match.p1_class);
   const labels =
     p1Class.id === classDef.id ? { playerLabel: `${p1Class.name} (P1)`, cpuLabel: `${classDef.name} (P2)` } : {};
-  const battle = createBattle(p1Class, classDef, labels);
+  const p1Deck = check(
+    await admin.from("match_decks").select("cards").eq("match_id", match.id).eq("player", match.p1).maybeSingle()
+  );
+  if (deckList) check(await admin.from("match_decks").insert({ match_id: match.id, player: userId, cards: deckList }));
+  const battle = createBattle(p1Class, classDef, {
+    ...labels,
+    playerDeck: p1Deck ? buildDeckFromList(p1Deck.cards as DeckListEntry[]) : null,
+    cpuDeck: deckList ? buildDeckFromList(deckList) : null,
+  });
 
   check(await admin.from("match_secrets").insert({ match_id: match.id, battle: serializeBattle(battle), round: battle.round }));
   check(

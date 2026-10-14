@@ -257,6 +257,244 @@ body {
   margin: 20px 0 8px;
 }
 
+/* --- Accounts (log in / sign up) ------------------------------------ */
+
+.shell-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.account-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e3c06d;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-box {
+  width: min(380px, 100%);
+  margin: 32px auto 0;
+  padding: 20px 22px 22px;
+  border-radius: 14px;
+  background: rgba(42, 47, 66, 0.94);
+  border: 1px solid #4a5573;
+}
+
+.auth-box .gallery-tabs {
+  margin-top: 0;
+}
+
+.auth-field {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #a9adc1;
+}
+
+.auth-field input,
+.deck-name {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid #4a5573;
+  background: #1b1f2c;
+  color: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+
+.auth-field input:focus,
+.deck-name:focus {
+  border-color: #c49b3a;
+}
+
+.auth-error,
+.auth-notice {
+  margin: 4px 0 12px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.auth-error {
+  color: #ff8f86;
+}
+
+.auth-notice {
+  color: #8fdca7;
+}
+
+.auth-submit {
+  width: 100%;
+}
+
+/* --- Decks (picker on class select + deck builder) ------------------ */
+
+.deck-tabs {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+
+.deck-chip {
+  padding: 8px 14px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #2a2f42;
+  color: #e8eaf0;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.deck-chip.selected {
+  border-color: #a8842f;
+  color: #ffffff;
+}
+
+.deck-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.deck-chip-new {
+  border-style: dashed;
+  border-color: #4a5573;
+  background: transparent;
+}
+
+.deck-chip-tag {
+  margin-left: 4px;
+  font-size: 11px;
+  color: #a9adc1;
+}
+
+.deck-editor {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(42, 47, 66, 0.94);
+}
+
+.deck-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.deck-editor-head .deck-name {
+  flex: 1;
+  margin-top: 0;
+}
+
+.deck-name:disabled {
+  opacity: 0.7;
+}
+
+.deck-count {
+  font-size: 15px;
+  font-weight: 700;
+  color: #8fdca7;
+  white-space: nowrap;
+}
+
+.deck-count.bad {
+  color: #ff8f86;
+}
+
+.deck-hint {
+  text-align: left;
+}
+
+.deck-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.deck-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 10px;
+  background: #1f2433;
+}
+
+.deck-row.empty {
+  opacity: 0.6;
+}
+
+.deck-art {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #1b1f2c;
+}
+
+.deck-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.deck-row-text .gallery-name {
+  margin-top: 0;
+}
+
+.deck-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deck-stepper span {
+  width: 22px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.deck-stepper button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: #4a5573;
+  color: #ffffff;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.deck-stepper button:hover:not(:disabled) {
+  background: #586694;
+}
+
+.deck-stepper button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.shell-button.danger {
+  background: #8f3a35;
+}
+
+.shell-button.danger:hover:not(:disabled) {
+  background: #b5423a;
+}
+
 /* --- Lobby ---------------------------------------------------------- */
 
 .lobby-code {

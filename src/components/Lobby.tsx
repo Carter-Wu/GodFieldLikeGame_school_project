@@ -23,6 +23,9 @@ export interface LobbyReady {
 export interface LobbyProps {
   mode: "create" | "join";
   playerClass: ClassDef;
+  /** One of the player's saved decks (decksApi.ts); null = starter deck. */
+  deckId: string | null;
+  deckName: string;
   /** For join mode: the room code supplied up front (from the join dialog). */
   code?: string;
   onReady: (ready: LobbyReady) => void;
@@ -30,7 +33,7 @@ export interface LobbyProps {
 }
 
 /** Online lobby (React shell): create a room / join by code, wait for start. */
-export function Lobby({ mode, playerClass, code, onReady, onBack }: LobbyProps): ReactElement {
+export function Lobby({ mode, playerClass, deckId, deckName, code, onReady, onBack }: LobbyProps): ReactElement {
   const [status, setStatus] = useState("Connecting…");
   const [roomCode, setRoomCode] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -74,13 +77,13 @@ export function Lobby({ mode, playerClass, code, onReady, onBack }: LobbyProps):
         if (cancelled) return;
         s.userId = userId;
         if (mode === "create") {
-          const match = await createMatch(playerClass.id);
+          const match = await createMatch(playerClass.id, deckId);
           if (cancelled) return;
           s.matchId = match.id;
           setRoomCode(match.code);
           setStatus("Send this room code to a friend. Waiting for them to join… (click the code to copy it)");
         } else {
-          const match = await joinMatch(code ?? "", playerClass.id);
+          const match = await joinMatch(code ?? "", playerClass.id, deckId);
           if (cancelled) return;
           s.matchId = match.id;
           setStatus("Joined! Starting the battle…");
@@ -127,7 +130,9 @@ export function Lobby({ mode, playerClass, code, onReady, onBack }: LobbyProps):
           Back
         </button>
       </div>
-      <p className="shell-subtitle">Playing as {playerClass.name}</p>
+      <p className="shell-subtitle">
+        Playing as {playerClass.name} · {deckName}
+      </p>
       {roomCode ? (
         <button type="button" className="lobby-code" onClick={copyCode} title="Click to copy">
           {roomCode}

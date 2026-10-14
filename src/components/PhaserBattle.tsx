@@ -2,15 +2,17 @@ import { useEffect, useRef, type ReactElement } from "react";
 import Phaser from "phaser";
 import { BattleScene } from "../scenes/BattleScene.ts";
 import { findClassById } from "../model/catalog.ts";
+import { buildDeckFromList, type DeckListEntry } from "../model/decks.ts";
 import { createPhaserGame } from "./phaserGame.ts";
 
 export interface PhaserBattleProps {
   playerClassId: string;
+  playerDeckList: DeckListEntry[] | null; // a validated custom deck; null = starter deck
   onExit: () => void;
 }
 
 /** vs-CPU battle stage: the Phaser BattleScene owns all frames; React only mounts it. */
-export function PhaserBattle({ playerClassId, onExit }: PhaserBattleProps): ReactElement {
+export function PhaserBattle({ playerClassId, playerDeckList, onExit }: PhaserBattleProps): ReactElement {
   const mountRef = useRef<HTMLDivElement>(null);
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
@@ -25,13 +27,14 @@ export function PhaserBattle({ playerClassId, onExit }: PhaserBattleProps): Reac
     game.events.once(Phaser.Core.Events.READY, () => {
       game.scene.add("BattleScene", BattleScene, true, {
         playerClass,
+        playerDeck: playerDeckList ? buildDeckFromList(playerDeckList) : null,
         onExit: () => onExitRef.current(),
       });
     });
     return () => {
       game.destroy(true);
     };
-  }, [playerClassId]);
+  }, [playerClassId, playerDeckList]);
 
   return <div className="phaser-mount" ref={mountRef} />;
 }

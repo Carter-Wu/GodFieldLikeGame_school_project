@@ -300,11 +300,23 @@ export type ClientAction = { kind: "card"; cardId: number } | { kind: "ultimate"
 export function createBattle(
   playerClass: ClassDef,
   cpuClass: ClassDef,
-  { playerLabel = null, cpuLabel = null }: { playerLabel?: string | null; cpuLabel?: string | null } = {}
+  {
+    playerLabel = null,
+    cpuLabel = null,
+    playerDeck = null,
+    cpuDeck = null,
+  }: {
+    playerLabel?: string | null;
+    cpuLabel?: string | null;
+    // Prebuilt card instances (a player's custom deck, see decks.ts);
+    // null = the class's starter deck.
+    playerDeck?: Card[] | null;
+    cpuDeck?: Card[] | null;
+  } = {}
 ): Battle {
   const battle: Battle = {
-    player: createFighter(playerClass, buildDeckForClass(playerClass), playerLabel),
-    cpu: createFighter(cpuClass, buildDeckForClass(cpuClass), cpuLabel),
+    player: createFighter(playerClass, playerDeck ?? buildDeckForClass(playerClass), playerLabel),
+    cpu: createFighter(cpuClass, cpuDeck ?? buildDeckForClass(cpuClass), cpuLabel),
     round: 1,
     winner: null, // the winning fighter, or null while the game is ongoing
     draw: false, // true if both fighters ran out of HP in the same round

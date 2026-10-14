@@ -1,9 +1,10 @@
 // The browser's one Supabase client, shared by online PvP (matchApi.ts) and
 // the game-catalog load (main entry).
 //
-// Sign-in sessions live in sessionStorage rather than localStorage, so every
-// browser tab is its own player -- two tabs on one machine can play each
-// other for testing.
+// Login sessions live in sessionStorage rather than localStorage, so every
+// browser tab is its own player -- two tabs on one machine can log in to two
+// different accounts and play each other for testing. (A reload keeps you
+// logged in; closing the tab logs you out.)
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
