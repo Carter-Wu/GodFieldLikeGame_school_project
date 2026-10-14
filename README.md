@@ -168,8 +168,9 @@ npx supabase functions deploy game --project-ref vygltqnmontwxyyeyfyb --use-api
 npx supabase link --project-ref jwhdynpvsojlpkwfxhou
 ```
 
-Card art (`npm run cards:art`) uploads to the project in `.env`, so sandbox cards show the
-built-in category icons until art is uploaded there too.
+Card art (`npm run cards:art -- --upload`) uploads to the project in `.env`. To upload it to
+the sandbox, put the sandbox's secret key in `.env.sandbox.local` (gitignored) as
+`SUPABASE_SERVICE_ROLE_KEY=...` and run `npm run cards:art -- --upload --sandbox`.
 
 ## Card art
 

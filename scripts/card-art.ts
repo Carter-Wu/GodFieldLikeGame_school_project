@@ -4,10 +4,12 @@
 //   npm run cards:art -- --upload   ...and uploads them to the `card-images`
 //                                   Storage bucket, then points each
 //                                   `cards.image_url` at its file
+//   npm run cards:art -- --upload --sandbox   ...same, to the sandbox project
 //
 // Uploading needs the project's secret (service_role) key, which must never
 // be committed or shipped to the browser: put it in .env.local (gitignored)
 // as SUPABASE_SERVICE_ROLE_KEY=... -- VITE_SUPABASE_URL is read from .env.
+// With --sandbox, both come from .env.sandbox / .env.sandbox.local instead.
 //
 // Each card id below has its own emblem; a card without one (e.g. a new row
 // added in the dashboard) gets its category's generic emblem instead.
@@ -289,13 +291,16 @@ interface ArtFile {
   path: string;
 }
 
-async function upload(files: ArtFile[]): Promise<void> {
-  const env = { ...readEnvFile(join(ROOT, ".env")), ...readEnvFile(join(ROOT, ".env.local")), ...process.env };
+async function upload(files: ArtFile[], sandbox: boolean): Promise<void> {
+  // --sandbox: the dev project (.env.sandbox + .env.sandbox.local) instead of the main one.
+  const [envFile, localFile] = sandbox ? [".env.sandbox", ".env.sandbox.local"] : [".env", ".env.local"];
+  const env = { ...readEnvFile(join(ROOT, envFile)), ...readEnvFile(join(ROOT, localFile)), ...process.env };
   const url = env.VITE_SUPABASE_URL;
   const key = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) {
-    throw new Error("Uploading needs VITE_SUPABASE_URL (.env) and SUPABASE_SERVICE_ROLE_KEY (.env.local).");
+    throw new Error(`Uploading needs VITE_SUPABASE_URL (${envFile}) and SUPABASE_SERVICE_ROLE_KEY (${localFile}).`);
   }
+  console.log(`uploading to ${url}`);
   const { createClient } = await import("@supabase/supabase-js");
   const admin = createClient(url, key, { auth: { persistSession: false } });
 
@@ -322,7 +327,7 @@ async function main(): Promise<void> {
     return { id: card.id, path };
   });
   console.log(`wrote ${files.length} files to card-art/`);
-  if (process.argv.includes("--upload")) await upload(files);
+  if (process.argv.includes("--upload")) await upload(files, process.argv.includes("--sandbox"));
 }
 
 main().catch((err: unknown) => {
