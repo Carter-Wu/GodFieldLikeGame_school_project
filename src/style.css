@@ -1,7 +1,8 @@
-/* The battle UI is now drawn entirely on the Phaser canvas (see
-   src/scenes/), so this just places that canvas -- no more DOM-based
-   card/panel/button rules here. legacy/index.html has its own separate
-   src/style.css and isn't affected by this file. */
+/* The battle frames are drawn on the Phaser canvas (see src/scenes/),
+   mounted by the React shell (see src/app/, src/components/) into
+   .phaser-mount below. Menus/popups are React DOM -- shell rules live here.
+   legacy/index.html has its own separate src/style.css and isn't affected
+   by this file. */
 
 * { box-sizing: border-box; }
 
@@ -11,11 +12,272 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #1e2230;
+  /* Letterbox surround is replaced by .ambient-bg below; keep a flat
+     fallback color if the artwork fails to load. */
+  background-color: #1e2230;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #e8eaf0;
 }
 
-#game {
+#root {
+  width: 100%;
+  max-width: 1920px;
+  padding: 16px;
+}
+
+#game,
+.phaser-mount {
   line-height: 0;
+}
+
+/* The Scale Manager measures this box, so it must be viewport-sized -- an
+   auto-height mount makes FIT converge on a too-small canvas. */
+.phaser-mount {
+  width: 100%;
+  height: calc(100vh - 32px);
+  height: calc(100dvh - 32px);
+  min-height: 480px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.phaser-mount canvas {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* Full-viewport ambient extension of the battle hall: cover, blurred and
+   darkened, scaled slightly past the edges so the blur never shows a seam.
+   Letterbox margins read as out-of-focus scene depth instead of flat color. */
+.ambient-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: url("/backgrounds/battle.svg") center / cover no-repeat #1e2230;
+  filter: blur(10px) brightness(0.55);
+  transform: scale(1.06);
+}
+
+/* --- React shell screens ------------------------------------------- */
+
+.shell-screen {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.shell-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shell-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.shell-subtitle {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  color: #a9adc1;
+  text-align: center;
+}
+
+.shell-heading {
+  margin: 16px 0 8px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.shell-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.shell-button {
+  min-width: 130px;
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #4a5573;
+  color: #ffffff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.shell-button:hover:not(:disabled) {
+  background: #586694;
+}
+
+.shell-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.shell-button.gold {
+  background: #a8842f;
+}
+
+.shell-button.gold:hover:not(:disabled) {
+  background: #c49b3a;
+}
+
+.shell-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #a9adc1;
+  text-align: center;
+}
+
+.class-grid {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.class-card {
+  width: 260px;
+  padding: 16px;
+  border-radius: 12px;
+  background: #2a2f42;
+  border: 3px solid transparent;
+  color: #e8eaf0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.class-card.selected {
+  border-color: #a8842f;
+}
+
+.class-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.class-stats,
+.class-synergy,
+.class-ultimate {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #a9adc1;
+}
+
+/* --- Card gallery --------------------------------------------------- */
+
+.gallery-tabs {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin: 12px 0 16px;
+  flex-wrap: wrap;
+}
+
+.gallery-tab {
+  min-width: 90px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: #2a2f42;
+  color: #e8eaf0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.gallery-tab.selected {
+  background: #a8842f;
+  color: #ffffff;
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 20px;
+}
+
+.gallery-card {
+  padding: 10px;
+  border-radius: 12px;
+  background: #2a2f42;
+}
+
+.gallery-art {
+  display: block;
+  width: 100%;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #1b1f2c;
+}
+
+.gallery-art.fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: #ffffff;
+}
+
+.gallery-art.fallback.attack { background: #b5423a; }
+.gallery-art.fallback.defend { background: #2f6f8f; }
+.gallery-art.fallback.buff { background: #3a8f5a; }
+.gallery-art.fallback.debuff { background: #6a4a94; }
+
+.gallery-name {
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.gallery-desc,
+.gallery-decks {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #a9adc1;
+}
+
+.gallery-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 20px 0 8px;
+}
+
+/* --- Lobby ---------------------------------------------------------- */
+
+.lobby-code {
+  display: block;
+  margin: 24px auto 8px;
+  padding: 8px 24px;
+  border: 0;
+  border-radius: 8px;
+  background: #1b1f2c;
+  color: #ffffff;
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.lobby-status {
+  margin: 12px 0;
+  font-size: 15px;
+  text-align: center;
 }
 
 /* Modal dialogs from src/ui/dialog.js (join-room code, leave-match

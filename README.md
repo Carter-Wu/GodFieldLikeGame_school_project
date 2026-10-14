@@ -7,8 +7,7 @@ more you lean into it, and an ultimate that charges up over time. See
 
 ## Running it
 
-Built with [Vite](https://vitejs.dev/) + [Phaser](https://phaser.io/) — the whole UI (class select,
-battle screen) is drawn on a Phaser canvas; see "Architecture" below. Requires Node.js.
+Built with [Vite](https://vitejs.dev/) + [React](https://react.dev/) + [Phaser](https://phaser.io/) — menus and popups are React DOM, battle frames are drawn on a Phaser canvas; see "Architecture" below. Requires Node.js.
 
 ```bash
 npm install
@@ -22,6 +21,7 @@ Then open the URL Vite prints (usually `http://localhost:5173`). Vite serves `in
 npm run build     # production build to dist/ (index.html + model-demo.html)
 npm run preview   # serve that production build locally
 npm run lint      # ESLint
+npm run typecheck # tsc --noEmit (strict)
 npm test          # Vitest (tests/)
 ```
 
@@ -61,12 +61,16 @@ not tuned game balance — see the open questions in `docs/DESIGN.md`.
 
 ## Architecture
 
-`src/model/*` is the entire game engine (classes, cards, synergies, the round loop) and knows
-nothing about rendering — no DOM, no Phaser. `src/scenes/*` is the Phaser UI on top of it:
-`ClassSelectScene` and `BattleScene` each call the model's functions (`createBattle`, `playRound`,
-...) and redraw themselves from the returned state. `src/phaserIcons.js` bridges the hand-authored
-SVG strings from `src/icons.js` into Phaser textures (base64 data URI → `this.load.svg`), so the
-icon art didn't need to be redrawn with Phaser's Graphics API.
+`src/model/*` is the entire game engine (classes, cards, synergies, the round loop, TypeScript) and knows
+nothing about rendering — no DOM, no Phaser. Rendering is split in two:
+`src/app/` + `src/components/` + `src/hooks/` is the React shell (class select, lobby, card gallery,
+dialogs), while `src/scenes/*` is the Phaser battle stage mounted by `<PhaserBattle>` /
+`<PhaserOnlineBattle>` into a div. The shell and the canvas talk through one narrow bridge —
+scene data in (`playerClass`, `match`/`hand`), an `onExit` callback out — so React never touches
+HP/cards/rounds and Phaser never touches routing. `src/phaserIcons.ts` bridges the hand-authored
+SVG strings from `src/icons.ts` into Phaser textures (base64 data URI → `this.load.svg`), so the
+icon art didn't need to be redrawn with Phaser's Graphics API. (No `StrictMode`: its dev
+double-effect would boot and destroy a whole `Phaser.Game` on every battle mount.)
 
 ## Online PvP (Supabase)
 
@@ -84,7 +88,7 @@ The same `src/model/` engine runs on the server instead of in the browser:
   `match_secrets` (both decks/hands and the pending moves) has no RLS policies at all, so only
   the Edge Function can read it. That's what keeps a player from reading the other side's hand or
   move out of the page.
-- `src/online/matchApi.js` — the browser side: sign-in, calls to the function, and Realtime
+- `src/online/matchApi.ts` — the browser side: sign-in, calls to the function, and Realtime
   updates (plus a slow poll as a fallback).
 - `.env` — the project URL and *publishable* key. Both are public by design and committed.
   Never put the secret / service_role key there.
@@ -94,8 +98,8 @@ The same `src/model/` engine runs on the server instead of in the browser:
 Classes, synergies, cards, and each class's deck live in Supabase tables (`classes`, `synergies`,
 `class_synergies`, `cards`, `class_deck_cards`, see `supabase/migrations/*_game_catalog.sql`),
 readable by anyone and writable only from the dashboard / service role.
-`src/model/catalog.js` loads them into the engine: the browser once at startup (falling back to
-the bundled `src/model/catalogData.js` if Supabase can't be reached, so vs-CPU still works
+`src/model/catalog.ts` loads them into the engine: the browser once at startup (falling back to
+the bundled `src/model/catalogData.ts` if Supabase can't be reached, so vs-CPU still works
 offline), the Edge Function per instance (re-read every 5 minutes).
 
 - **Tweaking numbers / adding cards or classes**: edit the rows in the Table Editor. No redeploy.
@@ -108,7 +112,7 @@ offline), the Edge Function per instance (re-read every 5 minutes).
   old one.
 - Older code skips card categories it doesn't know and ignores unknown effect kinds / stats, so
   adding new kinds of data first doesn't break the running game.
-- `catalogData.js` does not update itself from the database. `npm run catalog:sql` turns it into
+- `src/model/catalogData.ts` does not update itself from the database. `npm run catalog:sql` turns it into
   upsert SQL (that's how `*_seed_game_catalog.sql` was made).
 
 After changing anything under `supabase/` (or `src/model/`, which the function bundles), push it
@@ -152,7 +156,7 @@ built-in category icons until art is uploaded there too.
 ## Card art
 
 There's no tool in this environment that generates illustrations, so cards, classes, and the
-ultimate each get a small hand-authored SVG icon instead (`src/icons.js`):
+ultimate each get a small hand-authored SVG icon instead (`src/icons.ts`):
 
 - **Cards**: one base shape per category — sword (attack), shield (defend), upward spark (buff),
   downward drain (debuff) — plus a small colored corner dot on attack/defend cards showing their
@@ -182,7 +186,7 @@ showing their category icon, as does any card whose image fails to load. `image_
   `public/cards/shield_bash.png`.
 
 Every current card has an illustration in `card-art/*.svg`, generated from
-`scripts/card-art.js` (one emblem per card id, plus a generic per-category emblem for cards
+`scripts/card-art.ts` (one emblem per card id, plus a generic per-category emblem for cards
 without one). Edit the script, then:
 
 ```bash
@@ -199,16 +203,16 @@ the gallery, on hand cards, and in the round recap.
 The class-select, lobby and card-gallery screens (a castle on a hill at dusk; dimmed in the
 gallery) and the battle screen (a torch-lit castle
 hall) have medieval-fantasy background illustrations, `public/backgrounds/*.svg`, generated by
-`scripts/backgrounds.js` (`npm run backgrounds` after editing it). They're kept dark where the UI
+`scripts/backgrounds.ts` (`npm run backgrounds` after editing it). They're kept dark where the UI
 sits and detailed where the screen is empty; the battle screen adds a flickering glow over the
-painted torches (positions in `TORCHES`, mirrored in `BattleScene.js`) and a dark backing
+painted torches (positions in `TORCHES`, mirrored in `BattleScene.ts`) and a dark backing
 behind the battle log. They ship with the site (Vite copies `public/` into `dist/`), so they
 also work offline.
 
 ## Round recap (animation + sound)
 
 When a round resolves, the battle screen replays it before handing control back
-(`src/scenes/roundRecap.js`): each side's card flies out of its panel, then an effect per card
+(`src/scenes/roundRecap.ts`): each side's card flies out of its panel, then an effect per card
 type — a projectile, hit flash and floating damage number for attacks (HP bars count down as hits
 land, and a "Shield −5 · DEF −2" note shows what the target's defend card and resistance soaked
 up), a big "GUARD +5" with shield rings for defends, rising/falling sparks for buffs/debuffs.
@@ -216,7 +220,7 @@ Steps follow the engine's own order (both sides' defend/buff/debuff cards, then 
 attacks). The **Speed** button at the top right sets the playback speed (1x / 1.5x / 2x / 3x,
 remembered per browser, applies even mid-replay); clicking during the recap fast-forwards it.
 
-**Ultimates** (`src/scenes/ultimateFx.js`) look and sound different from normal cards: a
+**Ultimates** (`src/scenes/ultimateFx.ts`) look and sound different from normal cards: a
 full-width cut-in banner with the class emblem and ultimate name, then a per-class effect —
 Guardian drops a giant gold crest that slams the target (light column, shockwave rings, debris,
 metallic crash), Pyromancer charges a fireball that arcs across the screen and explodes into flame
@@ -227,7 +231,7 @@ When the game ends, a **VICTORY / DEFEAT / DRAW** screen appears in the middle o
 (rays and confetti for a win), with the final HP, a Back to menu button, and "View
 board" to close it and look at the final state.
 
-Sound effects are synthesized in the browser with Web Audio (`src/fx/sound.js`), so there are no
+Sound effects are synthesized in the browser with Web Audio (`src/fx/sound.ts`), so there are no
 audio files. The **Sound** button at the top right mutes them; the choice is remembered per browser.
 
 While a defend card is up, that fighter's panel gets a pulsing blue frame, a "GUARD +5" badge,
@@ -242,27 +246,34 @@ includes in the public match state — so online matches need the `game` functio
 
 | Path | Purpose |
 | --- | --- |
-| `index.html` | The game above — just a `#game` div; Phaser owns everything inside it |
-| `src/main.js` | Creates the `Phaser.Game` and registers the scenes |
-| `src/scenes/ClassSelectScene.js` | Class-select screen + vs CPU / online buttons |
-| `src/scenes/BattleScene.js` | Battle screen: renders the model's battle state, turns clicks into `playRound()` calls |
-| `src/scenes/LobbyScene.js` | Online: create/join a room, wait for the opponent |
-| `src/scenes/OnlineBattleScene.js` | Online battle screen — `BattleScene`'s drawing, fed by the server instead of a local engine |
-| `src/online/matchApi.js` | Supabase client for online PvP (see "Online PvP" above) |
+| `index.html` | The game — a `#root` div; React owns the shell, Phaser owns the battle canvas inside it |
+| `src/main.tsx` | React-shell bootstrap (catalog load, then `<App />`) |
+| `src/app/App.tsx` | Screen state machine: menu / battle / lobby / online-battle / gallery |
+| `src/components/ClassSelect.tsx` | Class-select screen (was `ClassSelectScene`) |
+| `src/components/Gallery.tsx` | Card gallery (was `CardGalleryScene`) |
+| `src/components/Lobby.tsx` | Online: create/join a room, wait for the opponent (was `LobbyScene`) |
+| `src/components/Dialog.tsx` | Join-code / confirm popups (React; the canvas-era `src/ui/dialog.ts` still serves `OnlineBattleScene`'s leave confirm) |
+| `src/components/PhaserBattle.tsx` | vs-CPU battle mount: creates a scoped `Phaser.Game`, starts `BattleScene`, destroys on unmount |
+| `src/components/PhaserOnlineBattle.tsx` | Online battle mount — same, for `OnlineBattleScene` |
+| `src/components/phaserGame.ts` | Shared `createPhaserGame()` helper (HiDPI text patch, FIT scaling) |
+| `src/hooks/useCatalog.ts` | Catalog load with Supabase → local fallback (was inline in old `main.js`) |
+| `src/scenes/BattleScene.ts` | Battle stage: renders the model's battle state, turns clicks into `playRound()` calls; `onExit` returns to the React menu |
+| `src/scenes/OnlineBattleScene.ts` | Online battle stage — `BattleScene`'s drawing, fed by the server instead of a local engine |
+| `src/online/matchApi.ts` | Supabase client for online PvP (see "Online PvP" above) |
 | `supabase/` | Supabase config, database migrations, and the `game` Edge Function |
-| `src/scenes/roundRecap.js` | End-of-round animation + sound effects (see "Round recap" above) |
-| `src/scenes/ultimateFx.js` | Per-class ultimate cut-in and effects |
-| `src/scenes/recapUtil.js` | Small animation helpers shared by the recap and ultimate effects |
-| `src/scenes/cardFace.js` | Draws one card (art/icon, name, effect text) — hand and recap |
-| `src/cardArt.js` | Loads `cards.image_url` artwork into Phaser textures |
-| `src/fx/sound.js` | Synthesized sound effects + mute switch |
-| `src/ui/dialog.js` | Centered in-page popups (join-room code, leave-match confirm) instead of `window.prompt`/`confirm` |
-| `scripts/backgrounds.js`, `public/backgrounds/` | Scene background illustrations (SVG) and their generator |
-| `scripts/card-art.js`, `card-art/` | Card illustrations (SVG) and their generator/uploader |
-| `src/scenes/theme.js` | Shared colors/fonts + small draw helpers (`roundedRect`, `createButton`) |
-| `src/icons.js` | Small hand-authored SVG icon per card category (+ a damage-type accent dot) — see "Card art" below |
-| `src/phaserIcons.js` | Loads `src/icons.js`'s SVG markup as Phaser textures — see "Architecture" below |
-| `src/style.css` | Just positions the Phaser canvas; the UI itself has no DOM/CSS anymore |
+| `src/scenes/roundRecap.ts` | End-of-round animation + sound effects (see "Round recap" above) |
+| `src/scenes/ultimateFx.ts` | Per-class ultimate cut-in and effects |
+| `src/scenes/recapUtil.ts` | Small animation helpers shared by the recap and ultimate effects |
+| `src/scenes/cardFace.ts` | Draws one card (art/icon, name, effect text) — hand and recap |
+| `src/cardArt.ts` | Loads `cards.image_url` artwork into Phaser textures |
+| `src/fx/sound.ts` | Synthesized sound effects + mute switch |
+| `src/ui/dialog.ts` | Leave-match confirm inside the Phaser battle (join-code input now lives in React `Dialog`) |
+| `scripts/backgrounds.ts`, `public/backgrounds/` | Scene background illustrations (SVG) and their generator |
+| `scripts/card-art.ts`, `card-art/` | Card illustrations (SVG) and their generator/uploader |
+| `src/scenes/theme.ts` | Shared colors/fonts + small draw helpers (`roundedRect`, `createButton`) |
+| `src/icons.ts` | Small hand-authored SVG icon per card category (+ a damage-type accent dot) — see "Card art" below |
+| `src/phaserIcons.ts` | Loads `src/icons.ts`'s SVG markup as Phaser textures — see "Architecture" below |
+| `src/style.css` | React shell styles + Phaser canvas positioning |
 | `src/model/` | The class/stat/synergy/card data model + battle engine (see below) |
 | `docs/DESIGN.md` | Design notes this is built from, including what's still open/unimplemented |
 | `model-demo.html` | Standalone smoke test for `src/model/`, independent of the UI |
@@ -272,18 +283,18 @@ includes in the public match state — so online matches need the `game` functio
 
 | File | Purpose |
 | --- | --- |
-| `util.js` | Shuffle helper |
-| `stats.js` | Stat block shape (`hp, def, mr, er, ur, crit`) |
-| `damageTypes.js` | Damage types and which stat resists each one |
-| `effects.js` | Shared effect shapes used by synergies, class passives, buffs, and debuffs |
-| `cardTypes.js` | The 4 card categories (attack/defend/buff/debuff) and defend-vs-attack resolution |
-| `synergies.js` | Tiered synergy definitions and resolution |
-| `classes.js` | Class definitions and effective-stat calculation |
-| `catalog.js` | Loads classes/synergies/cards (Supabase or local copy); `findClassById`, `allClasses`, `buildDeckForClass` |
-| `catalogData.js` | Local copy of the catalog rows: offline fallback and the source for `npm run catalog:sql` |
-| `engine.js` | The round loop: simultaneous card/ultimate resolution, damage/effects, a simple CPU |
-| `serialize.js` | Battle state ↔ plain JSON, and the public (no hands/decks) view of it, for online PvP |
-| `demo.js` | The assertions rendered by `model-demo.html` |
+| `util.ts` | Shuffle helper |
+| `stats.ts` | Stat block shape (`hp, def, mr, er, ur, crit`) |
+| `damageTypes.ts` | Damage types and which stat resists each one |
+| `effects.ts` | Shared effect shapes used by synergies, class passives, buffs, and debuffs |
+| `cardTypes.ts` | The 4 card categories (attack/defend/buff/debuff) and defend-vs-attack resolution |
+| `synergies.ts` | Tiered synergy definitions and resolution |
+| `classes.ts` | Class definitions and effective-stat calculation |
+| `catalog.ts` | Loads classes/synergies/cards (Supabase or local copy); `findClassById`, `allClasses`, `buildDeckForClass` |
+| `catalogData.ts` | Local copy of the catalog rows: offline fallback and the source for `npm run catalog:sql` |
+| `engine.ts` | The round loop: simultaneous card/ultimate resolution, damage/effects, a simple CPU |
+| `serialize.ts` | Battle state ↔ plain JSON, and the public (no hands/decks) view of it, for online PvP |
+| `demo.ts` | The assertions rendered by `model-demo.html` |
 
 ## Known simplifications (see docs/DESIGN.md for the full list)
 

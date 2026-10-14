@@ -7,10 +7,13 @@
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
-  <div id="game"></div>
+  <!-- Ambient full-viewport extension of the battle hall (blurred/darkened
+       via CSS); the crisp canvas centers on top. Pure decor, no game role. -->
+  <div class="ambient-bg" aria-hidden="true"></div>
+  <div id="root"></div>
 
-  <!-- Single module entry point; Vite bundles everything src/main.js imports,
-       including Phaser. The whole UI is drawn on the canvas -- see src/scenes/. -->
-  <script type="module" src="/src/main.js"></script>
+  <!-- React shell entry (menus/popups). Battle frames are still Phaser,
+       mounted by the shell into a .phaser-mount div -- see src/components/. -->
+  <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

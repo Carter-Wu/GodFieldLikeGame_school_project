@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
 // Two standalone HTML entry points (the playable game and the model smoke
@@ -10,6 +11,7 @@ import { fileURLToPath } from "node:url";
 // JS, leaving a broken page in dist/. `npm run dev` still serves legacy/ fine
 // since it just serves the source tree directly.
 export default defineConfig({
+  plugins: [react()],
   build: {
     rollupOptions: {
       input: {

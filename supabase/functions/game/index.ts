@@ -15,9 +15,18 @@
 //   { op: "leave", matchId }             -> {}
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { createBattle, cardAction, ultimateAction, resolveRound, isBattleOver } from "../../../src/model/engine.js";
-import { findClassById, loadCatalog } from "../../../src/model/catalog.js";
-import { serializeBattle, deserializeBattle, publicFighters } from "../../../src/model/serialize.js";
+import {
+  createBattle,
+  cardAction,
+  ultimateAction,
+  resolveRound,
+  isBattleOver,
+  type Action,
+  type ClientAction,
+  type Fighter,
+} from "../../../src/model/engine.ts";
+import { findClassById, loadCatalog } from "../../../src/model/catalog.ts";
+import { serializeBattle, deserializeBattle, publicFighters } from "../../../src/model/serialize.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,7 +42,7 @@ const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-// Classes/cards come from the catalog tables (see src/model/catalog.js).
+// Classes/cards come from the catalog tables (see src/model/catalog.ts).
 // Each function instance caches them and re-reads after CATALOG_TTL_MS, so a
 // balance change made in the dashboard reaches new matches within a few
 // minutes without a redeploy. Matches already running keep the cards they
@@ -73,8 +82,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-// deno-lint-ignore no-explicit-any
-function check<T>({ data, error }: { data: T; error: any }): T {
+function check<T>({ data, error }: { data: T; error: { message: string } | null }): T {
   if (error) throw new Error(error.message);
   return data;
 }
@@ -102,8 +110,7 @@ function randomCode() {
 
 // Client action -> engine action for this fighter, or null if the fighter
 // can't actually play it (card not in hand, ultimate not charged).
-// deno-lint-ignore no-explicit-any
-function toEngineAction(fighter: any, action: any) {
+function toEngineAction(fighter: Fighter, action: ClientAction | null | undefined): Action | null {
   if (action?.kind === "card") return cardAction(fighter, Number(action.cardId));
   if (action?.kind === "ultimate") return ultimateAction(fighter);
   return null;
@@ -181,7 +188,7 @@ async function submitAction(userId: string, body: { matchId?: unknown; action?: 
   const secrets = check(await admin.from("match_secrets").select("battle, round").eq("match_id", matchId).single());
   const battle = deserializeBattle(secrets.battle);
   const fighter = side === "p1" ? battle.player : battle.cpu;
-  const action = body.action as { kind?: string; cardId?: unknown };
+  const action = body.action as ClientAction | undefined;
   if (!toEngineAction(fighter, action)) throw new HttpError(400, "You can't play that right now");
   const stored = action.kind === "card" ? { kind: "card", cardId: Number(action.cardId) } : { kind: "ultimate" };
 
@@ -210,10 +217,30 @@ async function submitAction(userId: string, body: { matchId?: unknown; action?: 
   return { resolved: true };
 }
 
-// deno-lint-ignore no-explicit-any
-async function resolveMatchRound(match: any, row: any) {
+interface MatchRow {
+  id: string;
+  p1: string;
+  p2: string | null;
+  p1_class?: string;
+  p2_class?: string;
+  status: string;
+  log: string[];
+}
+
+interface SecretsRow {
+  battle: Parameters<typeof deserializeBattle>[0];
+  round: number;
+  p1_action: ClientAction | null;
+  p2_action: ClientAction | null;
+  match_id?: string;
+}
+
+async function resolveMatchRound(match: MatchRow, row: SecretsRow): Promise<void> {
   const battle = deserializeBattle(row.battle);
-  resolveRound(battle, toEngineAction(battle.player, row.p1_action), toEngineAction(battle.cpu, row.p2_action));
+  const p1Action = toEngineAction(battle.player, row.p1_action);
+  const p2Action = toEngineAction(battle.cpu, row.p2_action);
+  if (!p1Action || !p2Action) return; // stale row -- the other resolver already cleared it
+  resolveRound(battle, p1Action, p2Action);
 
   const saved = check(
     await admin

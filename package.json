@@ -10,20 +10,27 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",
-    "db:push": "npx supabase link --project-ref jwhdynpvsojlpkwfxhou && npx supabase db push",
-    "fn:deploy": "npx supabase functions deploy game --project-ref jwhdynpvsojlpkwfxhou --use-api",
-    "catalog:sql": "node scripts/catalog-sql.js",
-    "cards:art": "node scripts/card-art.js",
-    "backgrounds": "node scripts/backgrounds.js"
+    "typecheck": "tsc --noEmit",
+    "catalog:sql": "node scripts/catalog-sql.ts",
+    "cards:art": "node scripts/card-art.ts",
+    "backgrounds": "node scripts/backgrounds.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
-    "phaser": "^4.2.1"
+    "phaser": "^4.2.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9.39.5",
     "globals": "^17.12.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.1",
     "vite": "^7.3.6",
     "vitest": "^5.0.2"
   }
