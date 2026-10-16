@@ -18,6 +18,7 @@ export interface ClassSelectProps {
   onPlayCpu: (classId: string) => void;
   onCreateOnline: (classId: string) => void;
   onJoinOnline: (classId: string) => void;
+  onRandomOnline: (classId: string) => void;
   onOpenGallery: () => void;
 }
 
@@ -35,6 +36,7 @@ export function ClassSelect({
   onPlayCpu,
   onCreateOnline,
   onJoinOnline,
+  onRandomOnline,
   onOpenGallery,
 }: ClassSelectProps): ReactElement {
   const [selectedId, setSelectedId] = useState<string>(initialClassId ?? classes[0]?.id ?? "");
@@ -135,6 +137,14 @@ export function ClassSelect({
               onClick={() => onJoinOnline(selected.id)}
             >
               Join with code
+            </button>
+            <button
+              type="button"
+              className="shell-button gold"
+              disabled={!onlineAvailable}
+              onClick={() => onRandomOnline(selected.id)}
+            >
+              Random match
             </button>
           </div>
         </>

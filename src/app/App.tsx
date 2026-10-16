@@ -9,6 +9,9 @@ import { Lobby, type LobbyReady } from "../components/Lobby.tsx";
 import { Dialog, type DialogProps } from "../components/Dialog.tsx";
 import { PhaserBattle } from "../components/PhaserBattle.tsx";
 import { PhaserOnlineBattle } from "../components/PhaserOnlineBattle.tsx";
+import { RandomLobby } from "../components/RandomLobby.tsx";
+import { PhaserRandomBattle } from "../components/PhaserRandomBattle.tsx";
+import type { RandomMatch } from "../online/randomMatch.ts";
 import { findClassById } from "../model/catalog.ts";
 import { validateDeckList, type DeckListEntry } from "../model/decks.ts";
 import type { ClassDef } from "../model/classes.ts";
@@ -31,7 +34,9 @@ type Screen =
   | { name: "battle"; playerClassId: string; deck: DeckChoice }
   | { name: "lobby-create"; playerClass: ClassDef; deck: DeckChoice }
   | { name: "lobby-join"; playerClass: ClassDef; deck: DeckChoice; code: string }
-  | { name: "online-battle"; ready: LobbyReady };
+  | { name: "online-battle"; ready: LobbyReady }
+  | { name: "lobby-random"; playerClass: ClassDef; deck: DeckChoice }
+  | { name: "random-battle"; match: RandomMatch };
 
 /** React shell: menus and popups. The Phaser canvas owns all battle frames. */
 export function App(): ReactElement {
@@ -193,6 +198,20 @@ export function App(): ReactElement {
         />
       );
       break;
+    case "lobby-random":
+      body = (
+        <RandomLobby
+          playerClass={screen.playerClass}
+          deckId={screen.deck.id}
+          deckName={screen.deck.name}
+          onReady={(match) => setScreen({ name: "random-battle", match })}
+          onBack={toMenu}
+        />
+      );
+      break;
+    case "random-battle":
+      body = <PhaserRandomBattle match={screen.match} onExit={toMenu} />;
+      break;
     case "menu":
     default:
       body = (
@@ -218,6 +237,9 @@ export function App(): ReactElement {
             startWith(classId, (playerClass, deck) => setScreen({ name: "lobby-create", playerClass, deck }))
           }
           onJoinOnline={(classId) => startWith(classId, askJoinCode)}
+          onRandomOnline={(classId) =>
+            startWith(classId, (playerClass, deck) => setScreen({ name: "lobby-random", playerClass, deck }))
+          }
           onOpenGallery={() => setScreen({ name: "gallery" })}
         />
       );

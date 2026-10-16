@@ -8,6 +8,7 @@ import { findClassById } from "../src/model/catalog.ts";
 import { buildDeckFromList, validateDeckList, type DeckListEntry } from "../src/model/decks.ts";
 import { serializeFighter } from "../src/model/serialize.ts";
 import type { ClassDef } from "../src/model/classes.ts";
+import type { RandomMatchView } from "../src/online/randomMatchView.ts";
 import { admin } from "./supabase.ts";
 
 interface JoinOptions {
@@ -78,10 +79,10 @@ export class BattleRoom extends Room {
         action?.kind === "card" ? cardAction(fighter, Number(action.cardId)) : action?.kind === "ultimate" ? ultimateAction(fighter) : null;
       if (!picked) return client.send("error", "You can't play that right now");
       seat.pick = picked;
-      this.otherSeat(seat)?.client.send("opponentPicked");
 
       const [p1, p2] = this.seats as [Seat, Seat];
-      if (!p1.pick || !p2.pick) return;
+      if (!p1.pick || !p2.pick) return this.sendViews(); // shows "opponent has chosen"
+
       resolveRound(this.battle, p1.pick, p2.pick);
       p1.pick = p2.pick = null;
       this.sendViews();
@@ -135,12 +136,14 @@ export class BattleRoom extends Room {
       const opponent = me === battle.player ? battle.cpu : battle.player;
       seat.client.send("state", {
         round: battle.round,
-        me: serializeFighter(me, { includePrivate: true }),
+        me: { ...serializeFighter(me), hand: me.hand }, // own hand only, never the deck order
         opponent: serializeFighter(opponent),
         log: battle.log,
         over: isBattleOver(battle),
+        myReady: seat.pick !== null,
+        opponentReady: this.otherSeat(seat)?.pick != null,
         result: battle.draw ? "draw" : battle.winner === me ? "win" : battle.winner ? "lose" : null,
-      });
+      } satisfies RandomMatchView);
     }
   }
 }
