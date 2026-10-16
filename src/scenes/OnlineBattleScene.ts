@@ -97,23 +97,23 @@ export class OnlineBattleScene extends BattleScene {
   }
 
   override commitAction(action: Action): void {
-    this.previewedCardId = null;
-    this.previewedView = null;
-    this.dismissTween?.stop();
-    this.dismissTween = null;
+    const planned = { staged: this.staged, ultimate: this.stagedUltimate };
+    this.clearPlanning();
+    this.pendingTurn = { cards: action.cards, ultimate: action.ultimate, round: this.battle.round };
     this.submitting = true;
     this.errorMessage = null;
-    this.handHint = null;
-    this.pendingPick = action.kind === "card" ? action.card.name : action.kind === "ultimate" ? "your ultimate" : "a rest";
+    const n = action.cards.length + (action.ultimate ? 1 : 0);
+    this.pendingPick = n === 0 ? "a pass" : n === 1 ? "1 play" : `${n} plays`;
     this.render();
 
     submitAction(this.matchId, action)
       .catch((err: Error) => {
         this.errorMessage = err.message;
         this.pendingPick = null;
-        // The round never resolved: drop the pending slots (the flight, if
-        // any, already landed or was superseded -- its guards no-op).
-        this.pendingPlay = null;
+        // The round never resolved: give the picked cards back to plan with.
+        this.pendingTurn = null;
+        this.staged = planned.staged;
+        this.stagedUltimate = planned.ultimate;
       })
       .finally(() => {
         this.submitting = false;
@@ -123,9 +123,6 @@ export class OnlineBattleScene extends BattleScene {
   }
 
   override async onLeave(): Promise<void> {
-    // Abandon any commit flight first (same guard as the base onLeave).
-    this.flightSeq++;
-    this.finishFlight();
     if (!isBattleOver(this.battle)) {
       const leave = await confirmDialog({
         title: "Leave this match?",
@@ -154,7 +151,7 @@ export class OnlineBattleScene extends BattleScene {
       return `Round ${b.round} — you locked in ${what}. ${b.opponentReady ? "Resolving…" : "Waiting for your opponent…"}`;
     }
     if (this.handHint) return `Round ${b.round} — ${this.handHint}`;
-    return `Round ${b.round} — pick a card (you have ${b.player.ap} AP) or rest. ${
+    return `Round ${b.round} — ${this.plannedAp()}/${b.player.maxAp} AP left. Play cards, then End turn. ${
       b.opponentReady ? "Your opponent has already chosen." : "Your opponent is choosing at the same time."
     }`;
   }
@@ -204,7 +201,7 @@ export class OnlineBattleScene extends BattleScene {
 
     // Replay the round if this update is the one that resolved it (not, say,
     // the opponent leaving).
-    const resolvedRound = this.battle.player.lastAction?.round;
+    const resolvedRound = this.battle.player.lastTurn?.round;
     const justResolved =
       resolvedRound === previous.round && (this.battle.round > previous.round || (isBattleOver(this.battle) && !isBattleOver(previous)));
     if (justResolved) this.presentRound(before);

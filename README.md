@@ -41,13 +41,17 @@ Vite serves it as-is.
    Craftsman** (weapons that raise ATK, lots of ultimate charge) or **Necromancer** (fills the
    field with monsters, poison). The CPU gets a different one. Every deck also has the six
    general cards (Quick Jab, Splash, Spark, Healing Potion, Meditate, Smoke Bomb).
-2. Each round, you and the CPU pick a card (or ultimate, or **Rest**) **at the same time** — the
-   CPU commits to its move without knowing yours, and then both resolve together. Every card
-   costs **AP** (the gem in its corner): you start with 3, gain 2 a round (up to 10), and unspent
-   AP carries over; Rest skips your card for +1 extra AP.
-   - Attacks and ultimates go in **priority** order (fast cards first; a tie is settled by both
-     sides rolling a die). If the first hit knocks the other fighter out, or is an
-     "interrupts" card that lands, the slower attack never happens.
+2. Each round, you and the CPU plan a turn **at the same time** — the CPU commits without
+   knowing yours, and then both resolve together. Every card costs **AP** (the gem in its
+   corner), Hearthstone-style: you have 2 AP in round 1, one more max AP every round (up to 10),
+   and AP refills each turn (unspent AP is lost). Play as many cards as your AP pays for: click a
+   card to see it big in the middle of the screen, click it again to put it on your arena slot
+   (click one there to take it back), add your ultimate if it's charged, then press
+   **End turn** (with nothing picked, that's a pass).
+   - Attacks and ultimates go in **priority** order (fast cards first; where the two sides tie,
+     each side's die roll for the round decides). A fighter knocked out mid-way gets none of
+     their remaining strikes, and a landed "interrupts" card cancels the opponent's next attack
+     card.
    - Attacks and monsters can have an **element** (fire / water / electric) and put
      **statuses** on the target: Burn and Poison deal damage each round, Wet makes electric hit
      harder (and fire weaker), Acid lowers DEF/ER, Slow lowers priority, Blind halves damage.

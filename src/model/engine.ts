@@ -1,39 +1,41 @@
 // Battle engine wiring the class/card/synergy model above into an actual
 // playable loop. See docs/DESIGN.md for the design this is built from.
 //
-// Turns are simultaneous: each round, the player commits one action and the
+// Turns are simultaneous: each round, the player commits a turn -- any number
+// of cards their AP pays for, plus their ultimate if it's charged -- and the
 // CPU independently picks its own (from state alone -- chooseCpuAction never
-// looks at the player's chosen action), then both resolve together.
+// looks at the player's chosen turn), then both resolve together.
 //
 // The same engine also runs online PvP, server-side in the Supabase Edge
 // Function (supabase/functions/game/): there the two sides are two humans,
 // still stored in the `player` / `cpu` slots (player 1 / player 2), and
-// resolveRound is called with both humans' actions instead of going through
+// resolveRound is called with both humans' turns instead of going through
 // playRound's CPU. See "Online PvP" in README.md.
 //
 // A round, in order:
 //   1. durations of defends / buffs / debuffs tick down
-//   2. setup: both sides pay for their card (AP, plus HP or ultimate meter
-//      for some cards) and their defends, buffs, debuffs and monster
-//      summons take effect, all at once
-//   3. damage: attack cards and ultimates. The higher priority strikes first
-//      (ties: both roll a die); if the first strike knocks the other fighter
-//      out -- or is an "interrupts" card that lands -- the second one never
-//      happens
+//   2. setup: each side's cards are paid for (AP, plus HP or ultimate meter
+//      for some) in the order they were picked, and their defends, buffs,
+//      debuffs and monster summons take effect
+//   3. damage: every attack card and ultimate from both sides, the higher
+//      priority first. Where the two sides tie on priority, each side's die
+//      roll (one per side per round) decides; a side's own strikes keep the
+//      order they were picked in. A fighter knocked out mid-phase gets none
+//      of their remaining strikes, and a landed "interrupts" card cancels the
+//      opponent's next attack card
 //   4. monsters on the field attack, fastest first
 //   5. statuses: burning / poison deal their damage, every status ticks down
-//   6. both sides gain AP and ultimate meter and draw back up to a full hand
+//   6. AP refills (with one more max AP), ultimate meter regens, and both
+//      sides draw back up to a full hand
 //
 // AP (action points, docs: "as seen in Hearthstone"): every card costs AP.
-// You start with AP_RULES.start, gain AP_RULES.perRound every round (up to
-// AP_RULES.max), and unspent AP carries over -- so cheap rounds pay for big
-// ones. You still play one card per round; "Rest" plays nothing for a little
-// extra AP.
+// Max AP starts at AP_RULES.start and grows by AP_RULES.growth every round up
+// to AP_RULES.max; AP refills to the max at the start of each turn, and AP
+// left unspent is lost. "Gain AP" effects add to this turn's AP right away,
+// so they pay for cards picked after them.
 //
 // Other simplifications vs. docs/DESIGN.md (kept deliberately, not silently
 // dropped):
-// - One card per round, not as many as your AP allows -- the round recap
-//   and the online protocol are built around one move per side.
 // - No fog of war / troop placement yet.
 // - No QTE / clash when both players fire their ultimate in the same round;
 //   they just resolve by priority like attacks.
@@ -61,14 +63,13 @@ import { ELEMENT, RESIST_STAT, type DamageType, type Element } from "./damageTyp
 import { buildDeckForClass, findCardById } from "./catalog.ts";
 import type { Stats } from "./stats.ts";
 
-const HAND_SIZE = 5; // drawn back up to this every round
-const MAX_HAND = 7; // "draw" effects can go over HAND_SIZE, up to this
+const HAND_SIZE = 6; // drawn back up to this every round
+const MAX_HAND = 8; // "draw" effects can go over HAND_SIZE, up to this
 
 export const AP_RULES = {
-  start: 3,
-  perRound: 2,
+  start: 2, // max AP in round 1
+  growth: 1, // +max AP per round
   max: 10,
-  restBonus: 1, // extra AP for resting instead of playing a card
 } as const;
 
 export const FIELD_SIZE = 3; // monsters per side
@@ -155,9 +156,9 @@ export interface StatusTick {
   damage: number;
 }
 
-export interface LastAction {
-  round: number;
-  kind: string;
+// One card (or the ultimate) a fighter played in the last resolved round.
+export interface PlayRecord {
+  kind: "card" | "ultimate";
   cardId: string | null;
   name: string | null;
   category: string | null;
@@ -169,15 +170,24 @@ export interface LastAction {
   guarded: number; // absorbed by the target's defend card
   resisted: number; // absorbed by the target's DEF/MR/ER
   guard: GuardInfo | null;
-  // Damage phase: 1 = struck first, 2 = second, null = no attack this round.
+  // Damage phase: position among both sides' strikes (1 = first), null for
+  // cards that don't strike.
   order: number | null;
-  dice: number | null; // the die this side rolled for a priority tie
   cancelled: "interrupted" | "knocked_out" | null;
   healed: number;
   apGained: number;
   summoned: string[];
   fieldHits: FieldHit[];
   statusesApplied: StatusId[];
+}
+
+// What a fighter did in the last resolved round -- kept on the fighter as
+// `lastTurn` so the UI can replay the round once it resolves. It's public:
+// the same information is already in the battle log.
+export interface TurnRecord {
+  round: number;
+  plays: PlayRecord[]; // in the order they were picked
+  dice: number | null; // this side's die, if it was needed for a priority tie
   monsterHits: MonsterHit[]; // made by this fighter's monsters
   statusTicks: StatusTick[]; // end-of-round status damage this fighter took
 }
@@ -188,6 +198,7 @@ export interface Fighter {
   hp: number;
   maxHp: number;
   ap: number;
+  maxAp: number;
   deck: Card[];
   discard: Card[];
   hand: Card[];
@@ -199,7 +210,7 @@ export interface Fighter {
   tempModifiers: TempModifier[]; // [{ effect, remaining }] from buff/debuff cards
   disabledSynergies: Set<string>;
   disabledSynergyTimers: Record<string, number>; // synergyId -> remaining turns
-  lastAction: LastAction | null; // what this fighter did in the last resolved round -- see recordAction
+  lastTurn: TurnRecord | null; // what this fighter did in the last resolved round
   handCount?: number;
 }
 
@@ -212,6 +223,7 @@ export function createFighter(classDef: ClassDef, deck: Card[], label: string | 
     hp: classDef.baseStats.hp,
     maxHp: classDef.baseStats.hp,
     ap: AP_RULES.start,
+    maxAp: AP_RULES.start,
     deck,
     discard: [],
     hand: [],
@@ -223,7 +235,7 @@ export function createFighter(classDef: ClassDef, deck: Card[], label: string | 
     tempModifiers: [], // [{ effect, remaining }] from buff/debuff cards
     disabledSynergies: new Set<string>(),
     disabledSynergyTimers: {}, // synergyId -> remaining turns
-    lastAction: null, // what this fighter did in the last resolved round -- see recordAction
+    lastTurn: null,
   };
 }
 
@@ -292,19 +304,98 @@ export function canUseUltimate(fighter: Fighter): boolean {
   return fighter.ultimateMeter >= fighter.classDef.ultimate.cost;
 }
 
-// null if `fighter` can play `card` right now, otherwise why not (shown on
-// the battle screen).
-export function unplayableReason(fighter: Fighter, card: Card): string | null {
-  const cost = cardCost(card);
-  if (fighter.ap < cost) return `needs ${cost} AP`;
-  if ((card.hpCost ?? 0) > 0 && fighter.hp <= (card.hpCost ?? 0)) return `needs more than ${card.hpCost} HP`;
-  if (fighter.ultimateMeter < (card.meterCost ?? 0)) return `needs ${card.meterCost} ultimate meter`;
-  if (card.category === CARD_CATEGORY.MONSTER && fighter.field.length >= FIELD_SIZE) return "your field is full";
-  return null;
+// --- planning a turn -----------------------------------------------------
+//
+// A turn is the cards a fighter picks, in order, plus whether they also
+// fire their ultimate. Playing them one after another has to stay payable
+// the whole way: AP, HP (never down to 0), ultimate meter, field slots.
+
+export interface Action {
+  cards: Card[];
+  ultimate: boolean;
 }
 
-export function canPlayCard(fighter: Fighter, card: Card): boolean {
-  return unplayableReason(fighter, card) === null;
+// Client wire action (what the browser sends the server -- card identities
+// only, since the server re-checks them against its own copy).
+export interface ClientAction {
+  cardIds: number[];
+  ultimate: boolean;
+}
+
+export interface PlanCheck {
+  problem: string | null; // why the plan can't be played, or null
+  ap: number; // AP left after it
+  meter: number; // ultimate meter left after its cards (before the ultimate)
+}
+
+function selfEffects(card: Card): Effect[] {
+  return card.category === CARD_CATEGORY.BUFF || card.category === CARD_CATEGORY.DEBUFF ? (card.effects ?? []) : [];
+}
+
+export function checkPlan(fighter: Fighter, cards: Card[], ultimate = false): PlanCheck {
+  let ap = fighter.ap;
+  let hp = fighter.hp;
+  let meter = fighter.ultimateMeter;
+  let field = fighter.field.length;
+  const seen = new Set<number>();
+  for (const card of cards) {
+    const fail = (problem: string): PlanCheck => ({ problem, ap, meter });
+    if (seen.has(card.id) || !fighter.hand.some((c) => c.id === card.id)) return fail(`${card.name} isn't in your hand`);
+    seen.add(card.id);
+    const cost = cardCost(card);
+    if (ap < cost) return fail(`${card.name} needs ${cost} AP`);
+    if ((card.hpCost ?? 0) > 0 && hp <= (card.hpCost ?? 0)) return fail(`${card.name} needs more than ${card.hpCost} HP`);
+    if (meter < (card.meterCost ?? 0)) return fail(`${card.name} needs ${card.meterCost} ultimate meter`);
+    if (card.category === CARD_CATEGORY.MONSTER && field >= FIELD_SIZE) return fail("your field is full");
+    ap -= cost;
+    hp -= card.hpCost ?? 0;
+    meter = meter - (card.meterCost ?? 0) + (card.uaCharge ?? 0);
+    if (card.category === CARD_CATEGORY.MONSTER) field += 1;
+    for (const effect of selfEffects(card)) {
+      if (effect.kind === EFFECT_KIND.GAIN_AP) ap = Math.min(AP_RULES.max, ap + effect.amount);
+      if (effect.kind === EFFECT_KIND.SUMMON) field = Math.min(FIELD_SIZE, field + (effect.count ?? 1));
+    }
+  }
+  if (ultimate && meter < fighter.classDef.ultimate.cost) return { problem: "your ultimate isn't charged", ap, meter };
+  return { problem: null, ap, meter };
+}
+
+// null if `card` can be added after the already-picked `picked` cards,
+// otherwise why not (shown on the battle screen).
+export function unplayableReason(fighter: Fighter, card: Card, picked: Card[] = []): string | null {
+  return checkPlan(fighter, [...picked, card]).problem;
+}
+
+export function canPlayCard(fighter: Fighter, card: Card, picked: Card[] = []): boolean {
+  return unplayableReason(fighter, card, picked) === null;
+}
+
+// A turn from hand card ids, or null if it can't be played.
+export function planAction(fighter: Fighter, cardIds: number[], ultimate = false): Action | null {
+  const cards: Card[] = [];
+  for (const id of cardIds) {
+    const card = fighter.hand.find((c) => c.id === id);
+    if (!card) return null;
+    cards.push(card);
+  }
+  return checkPlan(fighter, cards, ultimate).problem === null ? { cards, ultimate } : null;
+}
+
+// Shorthands: a turn of just one card, just the ultimate, or nothing.
+export function cardAction(fighter: Fighter, cardId: number): Action | null {
+  return planAction(fighter, [cardId]);
+}
+
+export function ultimateAction(fighter: Fighter): Action | null {
+  return planAction(fighter, [], true);
+}
+
+export function passAction(): Action {
+  return { cards: [], ultimate: false };
+}
+
+export function toClientAction(action: Action): ClientAction {
+  return { cardIds: action.cards.map((c) => c.id), ultimate: action.ultimate };
 }
 
 // --- statuses, monsters, and hitting things ------------------------------
@@ -407,35 +498,29 @@ function strikeFighter(defender: Fighter, value: number, damageType: DamageType,
   return { damage: dealt, guarded: value - afterDefend, resisted: afterDefend - dealt };
 }
 
-// What happened to one fighter this round, collected while it resolves and
-// written into lastAction at the end (see recordAction).
-interface RoundNotes {
-  hit: HitResult | null;
-  order: number | null;
-  dice: number | null;
-  cancelled: LastAction["cancelled"];
-  healed: number;
-  apGained: number;
-  summoned: string[];
-  fieldHits: FieldHit[];
-  statusesApplied: StatusId[];
-  monsterHits: MonsterHit[];
-  statusTicks: StatusTick[];
-}
-
-function newNotes(): RoundNotes {
+function newPlay(card: Card | null): PlayRecord {
+  const isDefend = card?.category === CARD_CATEGORY.DEFEND;
+  const defendCard = isDefend ? (card as DefendCard) : null;
   return {
-    hit: null,
+    kind: card ? "card" : "ultimate",
+    cardId: card?.cardId ?? null,
+    name: card?.name ?? null,
+    category: card?.category ?? null,
+    damageType: (card as { damageType?: DamageType } | null)?.damageType ?? null,
+    element: card?.element ?? null,
+    cost: card ? cardCost(card) : null,
+    description: card ? describeCard(card) : null,
+    damage: null,
+    guarded: 0,
+    resisted: 0,
+    guard: defendCard ? { amount: defendCard.amount, mode: defendCard.mode, duration: defendCard.duration } : null,
     order: null,
-    dice: null,
     cancelled: null,
     healed: 0,
     apGained: 0,
     summoned: [],
     fieldHits: [],
     statusesApplied: [],
-    monsterHits: [],
-    statusTicks: [],
   };
 }
 
@@ -453,7 +538,7 @@ function applyEffects(
   target: Fighter,
   effects: Effect[],
   duration: number,
-  notes: RoundNotes,
+  play: PlayRecord,
   round: number
 ): void {
   for (const effect of effects) {
@@ -470,13 +555,13 @@ function applyEffects(
         target.tempModifiers.push({ effect, remaining: duration });
         break;
       case EFFECT_KIND.APPLY_STATUS:
-        if (addStatus(target, effect)) notes.statusesApplied.push(effect.status);
+        if (addStatus(target, effect)) play.statusesApplied.push(effect.status);
         break;
       case EFFECT_KIND.HEAL:
-        notes.healed += healFighter(target, effect.amount);
+        play.healed += healFighter(target, effect.amount);
         break;
       case EFFECT_KIND.GAIN_AP:
-        notes.apGained += gainAp(actor, effect.amount);
+        play.apGained += gainAp(actor, effect.amount);
         break;
       case EFFECT_KIND.DRAW:
         drawUpTo(actor, Math.min(MAX_HAND, actor.hand.length + effect.count));
@@ -490,7 +575,7 @@ function applyEffects(
         for (let i = 0; i < (effect.count ?? 1); i++) {
           const card = { ...(entry.props as Omit<MonsterCard, "id" | "category" | "name">), name: entry.name, cardId: entry.id };
           const monster = summonMonster(actor, card, round);
-          if (monster) notes.summoned.push(monster.name);
+          if (monster) play.summoned.push(monster.name);
         }
         break;
       }
@@ -501,25 +586,25 @@ function applyEffects(
   }
 }
 
-function resolveAttackCard(attacker: Fighter, defender: Fighter, card: AttackCard, notes: RoundNotes): HitResult {
+function resolveAttackCard(attacker: Fighter, defender: Fighter, card: AttackCard, play: PlayRecord): HitResult {
   const stats = computeCurrentStats(attacker);
   const value = Math.max(0, blinded(attacker, card.value + (card.value > 0 ? stats.atk : 0)));
 
   if (card.target === "field") {
-    for (const monster of [...defender.field]) notes.fieldHits.push(damageMonster(defender, monster, value));
+    for (const monster of [...defender.field]) play.fieldHits.push(damageMonster(defender, monster, value));
     return { damage: 0, guarded: 0, resisted: 0 };
   }
 
   const guard = blockingMonster(defender);
   if (guard) {
-    notes.fieldHits.push(damageMonster(defender, guard, value));
+    play.fieldHits.push(damageMonster(defender, guard, value));
     return { damage: 0, guarded: 0, resisted: 0 };
   }
 
   const hit = strikeFighter(defender, applyElement(defender, value, card.element), card.damageType);
-  if (card.lifesteal) notes.healed += healFighter(attacker, Math.floor(hit.damage * card.lifesteal));
+  if (card.lifesteal) play.healed += healFighter(attacker, Math.floor(hit.damage * card.lifesteal));
   for (const status of card.applies ?? []) {
-    if (addStatus(defender, status)) notes.statusesApplied.push(status.status);
+    if (addStatus(defender, status)) play.statusesApplied.push(status.status);
   }
   return hit;
 }
@@ -530,7 +615,7 @@ function resolveAttackCard(attacker: Fighter, defender: Fighter, card: AttackCar
 // later (see resolveDamagePhase) so that both sides' attacks use post-setup
 // state.
 function commitCardHousekeeping(actor: Fighter, card: Card): void {
-  actor.ap -= cardCost(card);
+  actor.ap = Math.max(0, actor.ap - cardCost(card));
   actor.hp = Math.max(1, actor.hp - (card.hpCost ?? 0));
   actor.ultimateMeter = Math.max(0, actor.ultimateMeter - (card.meterCost ?? 0)) + (card.uaCharge ?? 0);
   actor.cardsPlayedByCategory[card.category] = (actor.cardsPlayedByCategory[card.category] ?? 0) + 1;
@@ -539,22 +624,21 @@ function commitCardHousekeeping(actor: Fighter, card: Card): void {
   actor.discard.push(card);
 }
 
-function useUltimate(actor: Fighter, opponent: Fighter, notes: RoundNotes, round: number): HitResult {
+function useUltimate(actor: Fighter, opponent: Fighter, play: PlayRecord, round: number): HitResult {
   const ultimate = actor.classDef.ultimate;
   actor.ultimateMeter -= ultimate.cost;
   const damage = ultimate.damage ?? 0;
   opponent.hp = Math.max(0, opponent.hp - damage);
-  if (ultimate.effects?.length) applyEffects(actor, actor, ultimate.effects, ultimate.duration ?? 3, notes, round);
+  if (ultimate.effects?.length) applyEffects(actor, actor, ultimate.effects, ultimate.duration ?? 3, play, round);
   return { damage, guarded: 0, resisted: 0 };
 }
 
 // Tick every duration a fighter is carrying (active defends, temporary
 // buff/debuff modifiers, disabled synergies) down by one. Called at the
-// START of that fighter's own turn -- NOT right after they play the card
-// that created them -- so e.g. a duration:1 defend card actually survives to
-// see the opponent's next attack instead of expiring before the opponent
-// ever gets a turn. (Statuses tick at the END of the round instead -- see
-// tickStatuses.)
+// START of the round -- NOT right after they play the card that created
+// them -- so e.g. a duration:1 defend card actually survives to see the
+// opponent's next attack instead of expiring before the opponent ever gets a
+// turn. (Statuses tick at the END of the round instead -- see tickStatuses.)
 function tickStatusDurations(fighter: Fighter): void {
   for (const type of Object.keys(fighter.activeDefends)) {
     const entry = fighter.activeDefends[type];
@@ -582,37 +666,31 @@ function tickStatusDurations(fighter: Fighter): void {
 
 // End of round: burning and poison hurt, then every status ticks down. A
 // status applied this round with duration 1 is gone after this.
-function tickStatuses(fighter: Fighter, notes: RoundNotes): void {
+function tickStatuses(fighter: Fighter, turn: TurnRecord): void {
   for (const id of Object.keys(fighter.statuses) as StatusId[]) {
     const state = fighter.statuses[id];
     if (!state) continue;
     if (id === STATUS.BURNING || id === STATUS.POISON) {
       const damage = Math.min(fighter.hp, state.potency);
       fighter.hp -= damage;
-      notes.statusTicks.push({ status: id, damage });
+      turn.statusTicks.push({ status: id, damage });
     }
     state.remaining -= 1;
     if (state.remaining <= 0) delete fighter.statuses[id];
   }
 }
 
-// After the round: AP and ultimate meter come in and the hand refills.
-// (Duration ticking is deliberately NOT here -- see tickStatusDurations.)
+// After the round: max AP grows and AP refills, ultimate meter comes in and
+// the hand refills. (Duration ticking is deliberately NOT here -- see
+// tickStatusDurations.)
 function regenAndDraw(fighter: Fighter): void {
-  gainAp(fighter, AP_RULES.perRound);
+  fighter.maxAp = Math.min(AP_RULES.max, fighter.maxAp + AP_RULES.growth);
+  fighter.ap = fighter.maxAp;
   fighter.ultimateMeter += currentUltimateRegen(fighter);
   drawUpTo(fighter);
 }
 
 // --- battle-level state --------------------------------------------------
-//
-// An "action" a fighter commits to a round is one of:
-//   { kind: "card", card }
-//   { kind: "ultimate" }
-//   { kind: "rest" }        -- play nothing, gain AP_RULES.restBonus extra AP
-//   { kind: "none" }        -- nothing available to play (empty hand)
-
-export type Action = { kind: "card"; card: Card } | { kind: "ultimate" } | { kind: "rest" } | { kind: "none" };
 
 export interface Battle {
   player: Fighter;
@@ -622,10 +700,6 @@ export interface Battle {
   draw: boolean; // true if both fighters ran out of HP in the same round
   log: string[];
 }
-
-// Client wire action (what the browser sends the server — card identity only,
-// since the server re-checks it against its own copy).
-export type ClientAction = { kind: "card"; cardId: number } | { kind: "ultimate" } | { kind: "rest" };
 
 export function createBattle(
   playerClass: ClassDef,
@@ -666,171 +740,172 @@ export function isBattleOver(battle: Battle): boolean {
   return Boolean(battle.winner) || battle.draw;
 }
 
-// --- committing an action (without resolving it yet) ----------------------
-
-// null if the card isn't in hand or can't be paid for.
-export function cardAction(fighter: Fighter, cardId: number): Action | null {
-  const card = fighter.hand.find((c) => c.id === cardId);
-  return card && canPlayCard(fighter, card) ? { kind: "card", card } : null;
-}
-
-export function ultimateAction(fighter: Fighter): Action | null {
-  return canUseUltimate(fighter) ? { kind: "ultimate" } : null;
-}
-
-export function restAction(): Action {
-  return { kind: "rest" };
-}
-
-// Very simple CPU: use its ultimate the moment it's ready, otherwise defend
-// when low on HP, otherwise summon or favor its strongest attack, with
-// occasional debuff/buff plays -- among the cards it can afford, resting
-// when it can't afford any. Deliberately reads only battle.cpu's own state
-// -- never the player's pending action -- so this is a fair simultaneous
-// decision, not a reaction to what the player is about to do.
+// Very simple CPU: fires its ultimate the moment it's ready, then goes
+// through its hand by preference -- defends first when low on HP, then
+// monsters, attacks (strongest first), debuffs and buffs, with some
+// randomness -- adding every card it can still pay for. Deliberately reads
+// only battle.cpu's own state -- never the player's pending turn -- so this
+// is a fair simultaneous decision, not a reaction to what the player is
+// about to do.
 function chooseCpuAction(battle: Battle): Action {
   const cpu = battle.cpu;
-  if (canUseUltimate(cpu)) return { kind: "ultimate" };
-
-  if (cpu.hand.length === 0) return { kind: "none" };
-  const hand = cpu.hand.filter((c) => canPlayCard(cpu, c));
-  if (hand.length === 0) return { kind: "rest" };
-
-  const attacks = hand.filter((c) => c.category === CARD_CATEGORY.ATTACK) as AttackCard[];
-  const defends = hand.filter((c) => c.category === CARD_CATEGORY.DEFEND) as DefendCard[];
-  const monsters = hand.filter((c) => c.category === CARD_CATEGORY.MONSTER) as MonsterCard[];
-  const debuffs = hand.filter((c) => c.category === CARD_CATEGORY.DEBUFF);
-  const buffs = hand.filter((c) => c.category === CARD_CATEGORY.BUFF);
   const lowHp = cpu.hp <= cpu.maxHp * 0.4;
+  const score = (card: Card): number => {
+    const jitter = random() * 2;
+    switch (card.category) {
+      case CARD_CATEGORY.DEFEND:
+        return (lowHp ? 12 : 3) + jitter;
+      case CARD_CATEGORY.MONSTER:
+        return 8 + jitter;
+      case CARD_CATEGORY.ATTACK:
+        return 5 + card.value / 2 + jitter;
+      default:
+        return 4 + jitter;
+    }
+  };
+  const ranked = cpu.hand.map((card) => ({ card, s: score(card) })).sort((a, b) => b.s - a.s);
 
-  let card: Card;
-  if (lowHp && defends.length > 0) {
-    card = defends.reduce((a, b) => (a.amount >= b.amount ? a : b));
-  } else if (monsters.length > 0 && random() < 0.6) {
-    card = monsters.reduce((a, b) => (a.atk + a.hp >= b.atk + b.hp ? a : b));
-  } else if (attacks.length > 0 && random() < 0.7) {
-    card = attacks.reduce((a, b) => (a.value >= b.value ? a : b));
-  } else if (debuffs.length > 0 && random() < 0.5) {
-    card = debuffs[0] as Card; // length checked above
-  } else if (buffs.length > 0) {
-    card = buffs[0] as Card; // length checked above
-  } else {
-    card = hand[0] as Card; // empty hand returned above
+  const picked: Card[] = [];
+  const guardedTypes = new Set<string>();
+  for (const { card } of ranked) {
+    // Two defends of one damage type would just replace each other.
+    if (card.category === CARD_CATEGORY.DEFEND && guardedTypes.has(card.damageType)) continue;
+    if (!canPlayCard(cpu, card, picked)) continue;
+    picked.push(card);
+    if (card.category === CARD_CATEGORY.DEFEND) guardedTypes.add(card.damageType);
   }
-  return { kind: "card", card };
+  return { cards: picked, ultimate: checkPlan(cpu, picked, true).problem === null };
 }
 
 // --- resolving a round ------------------------------------------------------
-
-// Defends, buffs/debuffs and summons from an action go live immediately (the
-// "setup" phase); attacks and ultimates are resolved afterwards for both
-// sides (the "damage" phase). Running every action's setup before anyone's
-// damage is what makes a defend card played this round able to block an
-// attack played this same round, instead of only protecting against the
-// opponent's *next* round -- the two sides' choices are hidden from each
-// other but resolve together.
-function applySetupPhase(actor: Fighter, opponent: Fighter, action: Action, battle: Battle, notes: RoundNotes): void {
-  if (action.kind === "rest") {
-    notes.apGained += gainAp(actor, AP_RULES.restBonus);
-    addLog(battle, `${fighterName(actor)} rests (+${AP_RULES.restBonus} AP).`);
-    return;
-  }
-  if (action.kind !== "card") return;
-  const card = action.card;
-  commitCardHousekeeping(actor, card);
-
-  switch (card.category) {
-    case CARD_CATEGORY.DEFEND:
-      actor.activeDefends[card.damageType] = { card, remaining: card.duration };
-      addLog(battle, `${fighterName(actor)} sets up ${card.name} (defend).`);
-      break;
-    case CARD_CATEGORY.BUFF:
-      applyEffects(actor, actor, card.effects, card.duration ?? 1, notes, battle.round);
-      addLog(battle, `${fighterName(actor)} plays ${card.name} (buff).`);
-      break;
-    case CARD_CATEGORY.DEBUFF:
-      applyEffects(actor, opponent, card.effects, card.duration ?? 1, notes, battle.round);
-      addLog(battle, `${fighterName(actor)} plays ${card.name} (debuff).`);
-      break;
-    case CARD_CATEGORY.MONSTER:
-      if (summonMonster(actor, card, battle.round)) notes.summoned.push(card.name);
-      addLog(battle, `${fighterName(actor)} summons ${card.name}.`);
-      break;
-    // ATTACK is resolved in resolveDamagePhase, once both sides' defends and
-    // buffs/debuffs for this round are already in place.
-  }
-}
-
-function isDamageAction(action: Action): boolean {
-  return action.kind === "ultimate" || (action.kind === "card" && action.card.category === CARD_CATEGORY.ATTACK);
-}
-
-function actionPriority(fighter: Fighter, action: Action): number {
-  const base = action.kind === "ultimate" ? ULTIMATE_PRIORITY : action.kind === "card" ? (action.card.priority ?? 0) : 0;
-  return base - statusPotency(fighter, STATUS.SLOWED);
-}
 
 interface Side {
   actor: Fighter;
   opponent: Fighter;
   action: Action;
-  notes: RoundNotes;
+  turn: TurnRecord;
+  // (card, its play record) for every card, in pick order; the ultimate's
+  // record is `ultimatePlay`.
+  cardPlays: Array<{ card: Card; play: PlayRecord }>;
+  ultimatePlay: PlayRecord | null;
+  interruptsPending: number; // the opponent landed this many "interrupts" cards
 }
 
-// Attacks and ultimates, the higher priority first. Equal priority: both
-// roll a die (rerolling ties), highest goes first (docs: "If the priority
-// level is the same, use dice").
-function resolveDamagePhase(battle: Battle, sides: [Side, Side]): void {
-  const acting = sides.filter((s) => isDamageAction(s.action));
-  if (acting.length === 2) {
-    const [a, b] = acting as [Side, Side];
-    const pa = actionPriority(a.actor, a.action);
-    const pb = actionPriority(b.actor, b.action);
-    let bFirst = pb > pa;
-    if (pa === pb) {
-      let da = rollDie();
-      let db = rollDie();
-      for (let i = 0; da === db && i < 20; i++) {
-        da = rollDie();
-        db = rollDie();
-      }
-      if (da === db) db = da === 6 ? 5 : da + 1; // vanishingly unlikely; just settle it
-      a.notes.dice = da;
-      b.notes.dice = db;
-      bFirst = db > da;
-      addLog(battle, `Dice: ${fighterName(a.actor)} ${da}, ${fighterName(b.actor)} ${db}.`);
+// Defends, buffs/debuffs and summons go live immediately (the "setup"
+// phase); attacks and ultimates are resolved afterwards for both sides (the
+// "damage" phase). Running every card's setup before anyone's damage is what
+// makes a defend card played this round able to block an attack played this
+// same round, instead of only protecting against the opponent's *next*
+// round -- the two sides' choices are hidden from each other but resolve
+// together.
+function applySetupPhase(side: Side, battle: Battle): void {
+  const { actor, opponent } = side;
+  for (const { card, play } of side.cardPlays) {
+    commitCardHousekeeping(actor, card);
+    switch (card.category) {
+      case CARD_CATEGORY.DEFEND:
+        actor.activeDefends[card.damageType] = { card, remaining: card.duration };
+        addLog(battle, `${fighterName(actor)} sets up ${card.name} (defend).`);
+        break;
+      case CARD_CATEGORY.BUFF:
+        applyEffects(actor, actor, card.effects, card.duration ?? 1, play, battle.round);
+        addLog(battle, `${fighterName(actor)} plays ${card.name} (buff).`);
+        break;
+      case CARD_CATEGORY.DEBUFF:
+        applyEffects(actor, opponent, card.effects, card.duration ?? 1, play, battle.round);
+        addLog(battle, `${fighterName(actor)} plays ${card.name} (debuff).`);
+        break;
+      case CARD_CATEGORY.MONSTER:
+        if (summonMonster(actor, card, battle.round)) play.summoned.push(card.name);
+        addLog(battle, `${fighterName(actor)} summons ${card.name}.`);
+        break;
+      // ATTACK is resolved in resolveDamagePhase, once both sides' defends and
+      // buffs/debuffs for this round are already in place.
     }
-    if (bFirst) acting.reverse();
+  }
+  if (side.cardPlays.length === 0 && !side.action.ultimate) addLog(battle, `${fighterName(actor)} passes.`);
+}
+
+interface Strike {
+  side: Side;
+  card: AttackCard | null; // null = the ultimate
+  play: PlayRecord;
+  priority: number;
+  index: number; // pick order within the side
+}
+
+// Attacks and ultimates, higher priority first. Where the two sides tie on
+// priority, both roll a die once for the round (rerolling ties) and the
+// higher roll goes first (docs: "If the priority level is the same, use
+// dice"); a side's own strikes keep their pick order.
+function resolveDamagePhase(battle: Battle, sides: [Side, Side]): void {
+  const slowed = (f: Fighter): number => statusPotency(f, STATUS.SLOWED);
+  const strikes: Strike[] = [];
+  for (const side of sides) {
+    side.cardPlays.forEach(({ card, play }, index) => {
+      if (card.category !== CARD_CATEGORY.ATTACK) return;
+      strikes.push({ side, card, play, priority: (card.priority ?? 0) - slowed(side.actor), index });
+    });
+    if (side.ultimatePlay) {
+      strikes.push({ side, card: null, play: side.ultimatePlay, priority: ULTIMATE_PRIORITY - slowed(side.actor), index: side.cardPlays.length });
+    }
   }
 
-  let interrupted = false;
-  acting.forEach((side, i) => {
-    const { actor, opponent, action, notes } = side;
+  const [a, b] = sides;
+  const priorities = (s: Side): Set<number> => new Set(strikes.filter((x) => x.side === s).map((x) => x.priority));
+  const pb = priorities(b);
+  const tie = [...priorities(a)].some((p) => pb.has(p));
+  const dice = new Map<Side, number>([
+    [a, 0],
+    [b, 0],
+  ]);
+  if (tie) {
+    let da = rollDie();
+    let db = rollDie();
+    for (let i = 0; da === db && i < 20; i++) {
+      da = rollDie();
+      db = rollDie();
+    }
+    if (da === db) db = da === 6 ? 5 : da + 1; // vanishingly unlikely; just settle it
+    dice.set(a, da);
+    dice.set(b, db);
+    a.turn.dice = da;
+    b.turn.dice = db;
+    addLog(battle, `Dice: ${fighterName(a.actor)} ${da}, ${fighterName(b.actor)} ${db}.`);
+  }
+  strikes.sort((x, y) => y.priority - x.priority || (dice.get(y.side) ?? 0) - (dice.get(x.side) ?? 0) || x.index - y.index);
+
+  strikes.forEach((strike, i) => {
+    const { side, card, play } = strike;
+    const { actor, opponent } = side;
+    play.order = i + 1;
     if (actor.hp <= 0) {
-      notes.cancelled = "knocked_out";
-      addLog(battle, `${fighterName(actor)} goes down before acting.`);
+      play.cancelled = "knocked_out";
       return;
     }
-    if (interrupted && action.kind === "card") {
-      notes.cancelled = "interrupted";
-      addLog(battle, `${fighterName(actor)}'s ${action.card.name} is interrupted!`);
+    if (card && side.interruptsPending > 0) {
+      side.interruptsPending -= 1;
+      play.cancelled = "interrupted";
+      addLog(battle, `${fighterName(actor)}'s ${card.name} is interrupted!`);
       return;
     }
-    notes.order = i + 1;
-    if (action.kind === "ultimate") {
-      notes.hit = useUltimate(actor, opponent, notes, battle.round);
-      addLog(battle, `${fighterName(actor)} unleashes its ultimate for ${notes.hit.damage} damage!`);
+    if (!card) {
+      const hit = useUltimate(actor, opponent, play, battle.round);
+      play.damage = hit.damage;
+      addLog(battle, `${fighterName(actor)} unleashes its ultimate for ${hit.damage} damage!`);
       return;
     }
-    if (action.kind !== "card") return;
-    const card = action.card as AttackCard;
-    notes.hit = resolveAttackCard(actor, opponent, card, notes);
-    if (notes.fieldHits.length > 0) {
-      addLog(battle, `${fighterName(actor)}'s ${card.name} hits ${notes.fieldHits.map((h) => `${h.target} (${h.damage})`).join(", ")}.`);
+    const hit = resolveAttackCard(actor, opponent, card, play);
+    Object.assign(play, { damage: hit.damage, guarded: hit.guarded, resisted: hit.resisted });
+    if (play.fieldHits.length > 0) {
+      addLog(battle, `${fighterName(actor)}'s ${card.name} hits ${play.fieldHits.map((h) => `${h.target} (${h.damage})`).join(", ")}.`);
     } else {
-      addLog(battle, `${fighterName(actor)} hits with ${card.name} for ${notes.hit.damage} damage.`);
+      addLog(battle, `${fighterName(actor)} hits with ${card.name} for ${hit.damage} damage.`);
     }
-    if (card.interrupts && notes.hit.damage > 0) interrupted = true;
+    if (card.interrupts && hit.damage > 0) {
+      const other = sides.find((s) => s !== side);
+      if (other) other.interruptsPending += 1;
+    }
   });
 }
 
@@ -850,57 +925,22 @@ function resolveMonsterPhase(battle: Battle, sides: [Side, Side]): void {
 
   let order = 0;
   for (const { side, monster } of acting) {
-    const { actor, opponent, notes } = side;
+    const { actor, opponent, turn } = side;
     if (monster.hp <= 0 || actor.hp <= 0 || opponent.hp <= 0) continue;
     const atk = Math.max(0, blinded(actor, monster.atk));
     const target = blockingMonster(opponent) ?? opponent.field[0];
     order += 1;
     if (target) {
       const hit = damageMonster(opponent, target, atk);
-      notes.monsterHits.push({ order, attacker: monster.name, target: target.name, damage: hit.damage, guarded: 0, resisted: 0, killed: hit.killed, damageType: monster.damageType });
+      turn.monsterHits.push({ order, attacker: monster.name, target: target.name, damage: hit.damage, guarded: 0, resisted: 0, killed: hit.killed, damageType: monster.damageType });
       addLog(battle, `${monster.name} hits ${target.name} for ${hit.damage}${hit.killed ? " -- destroyed!" : "."}`);
       continue;
     }
     const hit = strikeFighter(opponent, applyElement(opponent, atk, monster.element), monster.damageType, false);
     for (const status of monster.applies) addStatus(opponent, status);
-    notes.monsterHits.push({ order, attacker: monster.name, target: "fighter", ...hit, killed: false, damageType: monster.damageType });
+    turn.monsterHits.push({ order, attacker: monster.name, target: "fighter", ...hit, killed: false, damageType: monster.damageType });
     addLog(battle, `${monster.name} hits ${fighterName(opponent)} for ${hit.damage}.`);
   }
-}
-
-// A plain-JSON summary of what a fighter did this round, kept on the fighter
-// as `lastAction` so the UI can replay the round (animation) once it
-// resolves. It's public: the same information is already in the battle log.
-function recordAction(fighter: Fighter, action: Action, round: number, notes: RoundNotes): void {
-  const card = action.kind === "card" ? action.card : null;
-  const isDefend = card?.category === CARD_CATEGORY.DEFEND;
-  const defendCard = isDefend ? (card as DefendCard) : null;
-  const hit = notes.hit;
-  fighter.lastAction = {
-    round,
-    kind: action.kind,
-    cardId: card?.cardId ?? null,
-    name: card?.name ?? null,
-    category: card?.category ?? null,
-    damageType: (card as { damageType?: DamageType } | null)?.damageType ?? null,
-    element: card?.element ?? null,
-    cost: card ? cardCost(card) : null,
-    description: card ? describeCard(card) : null,
-    damage: hit?.damage ?? null,
-    guarded: hit?.guarded ?? 0, // absorbed by the target's defend card
-    resisted: hit?.resisted ?? 0, // absorbed by the target's DEF/MR/ER
-    guard: isDefend && defendCard ? { amount: defendCard.amount, mode: defendCard.mode, duration: defendCard.duration } : null,
-    order: notes.order,
-    dice: notes.dice,
-    cancelled: notes.cancelled,
-    healed: notes.healed,
-    apGained: notes.apGained,
-    summoned: notes.summoned,
-    fieldHits: notes.fieldHits,
-    statusesApplied: notes.statusesApplied,
-    monsterHits: notes.monsterHits,
-    statusTicks: notes.statusTicks,
-  };
 }
 
 function checkOutcome(battle: Battle): void {
@@ -920,16 +960,29 @@ function checkOutcome(battle: Battle): void {
   }
 }
 
-// Commit the player's chosen action for this round, have the CPU
-// independently commit its own, then resolve both together.
+// Commit the player's turn for this round, have the CPU independently
+// commit its own, then resolve both together.
 export function playRound(battle: Battle, playerAction: Action | null): void {
   if (isBattleOver(battle) || !playerAction) return;
   resolveRound(battle, playerAction, chooseCpuAction(battle));
 }
 
-// Resolve one round from both sides' already-committed actions. playRound
-// uses this with the CPU's pick; online PvP calls it directly with both
-// players' picks once the server has collected them.
+function makeSide(actor: Fighter, opponent: Fighter, action: Action, round: number): Side {
+  return {
+    actor,
+    opponent,
+    action,
+    turn: { round, plays: [], dice: null, monsterHits: [], statusTicks: [] },
+    cardPlays: action.cards.map((card) => ({ card, play: newPlay(card) })),
+    ultimatePlay: action.ultimate ? newPlay(null) : null,
+    interruptsPending: 0,
+  };
+}
+
+// Resolve one round from both sides' already-committed turns. playRound uses
+// this with the CPU's pick; online PvP calls it directly with both players'
+// picks once the server has collected them. Turns are assumed to have
+// passed checkPlan (planAction).
 export function resolveRound(battle: Battle, playerAction: Action, cpuAction: Action): void {
   if (isBattleOver(battle)) return;
 
@@ -941,13 +994,13 @@ export function resolveRound(battle: Battle, playerAction: Action, cpuAction: Ac
   tickStatusDurations(battle.cpu);
 
   const sides: [Side, Side] = [
-    { actor: battle.player, opponent: battle.cpu, action: playerAction, notes: newNotes() },
-    { actor: battle.cpu, opponent: battle.player, action: cpuAction, notes: newNotes() },
+    makeSide(battle.player, battle.cpu, playerAction, battle.round),
+    makeSide(battle.cpu, battle.player, cpuAction, battle.round),
   ];
 
   addLog(battle, `-- Round ${battle.round} --`);
-  applySetupPhase(battle.player, battle.cpu, playerAction, battle, sides[0].notes);
-  applySetupPhase(battle.cpu, battle.player, cpuAction, battle, sides[1].notes);
+  applySetupPhase(sides[0], battle);
+  applySetupPhase(sides[1], battle);
   resolveDamagePhase(battle, sides);
   checkOutcome(battle);
   if (!isBattleOver(battle)) {
@@ -955,17 +1008,18 @@ export function resolveRound(battle: Battle, playerAction: Action, cpuAction: Ac
     checkOutcome(battle);
   }
   if (!isBattleOver(battle)) {
-    tickStatuses(battle.player, sides[0].notes);
-    tickStatuses(battle.cpu, sides[1].notes);
-    for (const { actor, notes } of sides) {
-      for (const tick of notes.statusTicks) {
+    for (const { actor, turn } of sides) {
+      tickStatuses(actor, turn);
+      for (const tick of turn.statusTicks) {
         if (tick.damage > 0) addLog(battle, `${fighterName(actor)} takes ${tick.damage} from ${STATUS_LABEL[tick.status]}.`);
       }
     }
     checkOutcome(battle);
   }
-  recordAction(battle.player, playerAction, battle.round, sides[0].notes);
-  recordAction(battle.cpu, cpuAction, battle.round, sides[1].notes);
+  for (const side of sides) {
+    side.turn.plays = [...side.cardPlays.map((p) => p.play), ...(side.ultimatePlay ? [side.ultimatePlay] : [])];
+    side.actor.lastTurn = side.turn;
+  }
   if (isBattleOver(battle)) return;
 
   regenAndDraw(battle.player);

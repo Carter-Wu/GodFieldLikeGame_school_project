@@ -75,12 +75,24 @@ Class-based, and modified by synergies.
 
 From the team's "Card Design" doc; see `src/model/engine.ts` for the exact rules.
 
-- **AP**: every card has a cost. Start 3, +2 per round, cap 10, unspent AP carries over.
-  "Rest" plays nothing for +1 extra AP. Some cards also cost HP or ultimate meter (Black Mage).
+- **AP and multi-card turns** (Hearthstone-style): a turn is any number of cards, in the order
+  picked, plus optionally the ultimate. Max AP is 2 in round 1 and grows by 1 per round up to
+  10; AP refills to the max each turn and unspent AP is lost. "Gain AP" effects (Dark Pact,
+  Mana Tap, Tinker, Soul Siphon) add AP at once, so they pay for cards picked after them. The
+  whole turn has to stay payable in pick order (AP, HP above 0, ultimate meter, field slots) —
+  `checkPlan` in `engine.ts`, re-run by the server. Some cards also cost HP or ultimate meter
+  (Black Mage). The hand refills to 6 cards every round.
+- **Card selection** (doc "Card Position"): hand fanned at the bottom center; hover expands a
+  card; click shows it in the middle at ≤⅓ screen height with space above and below; clicking
+  it again plays it onto your arena slot (only your client sees it until the turn ends),
+  clicking anywhere else cancels. Picked cards can be clicked to take them back.
 - **UA charge**: cards can add extra ultimate meter when played (Master Craftsman).
-- **Priority and dice**: attacks/ultimates resolve by priority (fast cards first, Slow lowers
-  it); equal priority → both roll a die. A knockout or a landed "interrupts" card cancels the
-  slower attack — this is the doc's "some players' turns can be blocked".
+- **Priority and dice**: every attack card and ultimate of both sides goes in one queue by
+  priority (fast cards first, Slow lowers it). Where the two sides tie on priority, each side
+  rolls one die for the round and the higher roll goes first on every tie; a side's own
+  strikes keep their pick order. A fighter knocked out mid-queue gets none of their remaining
+  strikes, and a landed "interrupts" card cancels the opponent's next attack card — the doc's
+  "some players' turns can be blocked".
 - **Elements and statuses**: fire / water / electric affinity; Burn, Poison (stacks), Wet
   (electric +50%, fire −50% and dries), Acid (−DEF/ER), Slow, Blind (half damage). Water puts
   out Burn; Burn can't catch on a Wet target.
@@ -90,13 +102,10 @@ From the team's "Card Design" doc; see `src/model/engine.ts` for the exact rules
 
 Not done yet from that doc:
 
-- Playing several cards per turn with your AP (still one card per round — the recap UI and the
-  online protocol are built around one move per side).
 - QTE / clash when both players fire their ultimate in the same round.
 - Best Friend class (one special monster + evolution card), and the other Summoner / Mage /
   Black Mage sub-classes (Warlock, Vampire, Entomologist, Zoologist, Botanist, Mycologist,
   Plague Doctor).
-- The new hand layout (card moves to the center at ⅓ screen, confirm by clicking again).
 
 ## Architecture implications
 

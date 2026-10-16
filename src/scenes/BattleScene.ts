@@ -12,21 +12,20 @@ import {
   computeCurrentStats,
   canUseUltimate,
   createBattle,
-  cardAction,
-  ultimateAction,
-  restAction,
+  checkPlan,
+  planAction,
+  canPlayCard,
   unplayableReason,
   playRound,
   describeEffect,
   isBattleOver,
   fighterName,
-  AP_RULES,
   FIELD_SIZE,
   STATUS_LABEL,
   type Action,
   type Battle,
   type Fighter,
-  type LastAction,
+  type TurnRecord,
   type Monster,
 } from "../model/engine.ts";
 import { EFFECT_KIND, MODIFIER_MODE, STATUS, type StatusId } from "../model/effects.ts";
@@ -53,8 +52,8 @@ import {
   useRenderScale,
   type Button,
 } from "./theme.ts";
-import { AP_GEM_COLOR, actionFace, cardFaceData, drawCardFace } from "./cardFace.ts";
-import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RecapSlotView, type RoundRecapRun } from "./roundRecap.ts";
+import { AP_GEM_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
+import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
 // 1280x720 board layout: CPU strip top-center, player strip lower-center,
 // portraits in the left column, battle log in the right column, hand along
@@ -82,25 +81,27 @@ const BUTTON_X = 24;
 const BUTTON_W = 176;
 const BUTTON_H = 40;
 const ULTIMATE_BUTTON_Y = 296;
-const LEAVE_BUTTON_Y = 346;
-const REST_BUTTON_Y = 396;
+const END_TURN_BUTTON_Y = 346;
+const LEAVE_BUTTON_Y = 396;
 
 const HAND_Y = 548;
 const CARD_W = 112;
 const CARD_H = 160;
 
-// Fanned bottom hand + preview-then-commit: cards overlap horizontally; hover
-// lifts slightly (mouse only); click/tap pops the card into a full preview
-// (raised, enlarged, gold ring) and a second click/tap commits it.
+// The hand (docs "Card Position"): cards fanned out from the bottom center;
+// hover expands a card; a click moves it to the middle of the screen in full
+// view (at most a third of the screen tall, with space above and below);
+// clicking it again plays it onto your side of the arena, clicking anywhere
+// else puts it back.
 const FAN_OVERLAP = 44;
-const HOVER_LIFT = 12;
-const POP_SCALE = 1.4;
-const POP_LIFT = 104;
+const HOVER_LIFT = 14;
+const HOVER_SCALE = 1.12;
+const PREVIEW_SCALE = 1.45; // 160px card -> 232px, under a third of 720
 const PREVIEW_RING = 0xc49b3a;
+const STAGE_SCALE = 0.6; // picked cards, shrunk onto the player's slot
 
-// Middle arena slots holding each side's last resolved card (Phase 3). Fed
-// solely by post-resolution lastAction -- vacant pre-first-commit -- so the CPU slot
-// can never leak a face before reveal.
+// Middle arena slots: the player's holds the cards picked this turn; once
+// the turn is sent, the opponent's shows a face-down card until the recap.
 const SLOT_W = 150;
 const SLOT_H = 190;
 const SLOT_Y = 195;
@@ -128,13 +129,12 @@ const STATUS_COLOR: Record<StatusId, number> = {
   [STATUS.BLIND]: 0x4a4f60,
 };
 
-// Commit flight: hand card tosses into its slot before resolution (~260ms).
-const FLIGHT_DURATION = 260;
-
-export interface PendingPlay {
-  playerCard: Card | null; // committed card (null for ultimates: nothing to fly)
-  round: number; // battle.round at commit; validates the CPU face source
-  cpuRevealed: boolean; // flip done -- rebuilds may draw the face, not the back
+// A turn that's been sent: the slots keep showing it (and a face-down card
+// for the opponent) until the round's recap has played.
+export interface PendingTurn {
+  cards: Card[];
+  ultimate: boolean;
+  round: number; // battle.round at commit
 }
 
 const LOG_X = 1072;
@@ -256,24 +256,16 @@ export class BattleScene extends Phaser.Scene {
   slotsContainer!: Phaser.GameObjects.Container;
   fieldContainer!: Phaser.GameObjects.Container;
   ultimateButton!: Button;
-  restButton!: Button;
+  endTurnButton!: Button;
   handHint: string | null = null; // why the card just clicked can't be played
-  previewedCardId: number | null = null; // card id held in full preview (click/tap once; commits on second)
-  animatePreview = false; // tween the pop-in only on the selecting render, never on rebuilds
-  previewedView: Phaser.GameObjects.Container | null = null; // live popped container, for glide-back dismiss
-  previewedSlotX = 0; // its slot x, the dismiss target
-  dismissTween: Phaser.Tweens.Tween | null = null; // in-flight glide-back, killed on any rebuild
-  flightLayer!: Phaser.GameObjects.Container; // commit-flight clones; never rebuilt by render()
-  pendingPlay: PendingPlay | null = null; // committed round in flight: slots show it until the recap fades it
-  slotViews: Record<"player" | "cpu", { card: Phaser.GameObjects.Container | null; isBack: boolean }> = {
-    player: { card: null, isBack: false },
-    cpu: { card: null, isBack: false },
-  };
-  flightSeq = 0; // invalidates stale flight continuations (leave/restart mid-flight)
-  flightTween: Phaser.Tweens.Tween | null = null;
-  flightView: Phaser.GameObjects.Container | null = null;
-  flightPromise: Promise<void> | null = null;
-  flightResolve: (() => void) | null = null;
+  // This turn's plan, built up card by card: confirmed cards move from the
+  // hand onto the player's arena slot (only this client sees them) until
+  // "End turn" sends the whole turn.
+  staged: Card[] = [];
+  stagedUltimate = false;
+  previewedCardId: number | null = null; // hand card shown big in the middle, waiting for a confirm click
+  previewLayer!: Phaser.GameObjects.Container; // the center preview, above everything else
+  pendingTurn: PendingTurn | null = null; // committed turn being resolved/replayed
   logScrollIndex = 0; // pixel offset into the measured log content
   logMaxScrollIndex = 0; // max pixel offset (content height - box height)
   logTotalHeight = 0; // measured content height, set by renderLog
@@ -356,53 +348,32 @@ export class BattleScene extends Phaser.Scene {
     return !isBattleOver(this.battle) && !this.recapPlaying;
   }
 
+  // Send this turn. vs-CPU resolves it right away; OnlineBattleScene
+  // overrides this to send it to the server.
   commitAction(action: Action): void {
-    this.handHint = null;
-    this.previewedCardId = null;
-    this.animatePreview = false;
-    this.previewedView = null;
-    this.dismissTween?.stop();
-    this.dismissTween = null;
+    this.clearPlanning();
+    this.pendingTurn = { cards: action.cards, ultimate: action.ultimate, round: this.battle.round };
     const before = this.currentHp();
     playRound(this.battle, action);
     this.presentRound(before);
   }
 
-  // Glide a held preview back into the fan, then rebuild. Async on purpose:
-  // the snap-back was the complaint. Guarded everywhere a rebuild can beat
-  // it there -- renderHand kills the tween, commit paths clear the state --
-  // so a dead or stale target can never drive a render.
-  dismissPreview(): void {
-    const view = this.previewedView;
-    const slotX = this.previewedSlotX;
+  // Forget the turn being planned (the cards are all still in hand).
+  clearPlanning(): void {
+    this.handHint = null;
     this.previewedCardId = null;
-    this.previewedView = null;
-    this.dismissTween?.stop();
-    this.dismissTween = null;
-    if (!view || !view.active || !view.scene) {
-      this.render();
-      return;
-    }
-    this.dismissTween = this.tweens.add({
-      targets: view,
-      x: slotX,
-      y: 0,
-      scale: 1,
-      duration: 120,
-      ease: "Sine.easeIn",
-      onComplete: () => {
-        this.dismissTween = null;
-        if (this.previewedCardId !== null || !this.sys.isActive()) return;
-        this.render();
-      },
-    });
+    this.staged = [];
+    this.stagedUltimate = false;
+  }
+
+  // Cancel the center preview: the card goes back to the hand.
+  dismissPreview(): void {
+    if (this.previewedCardId === null) return;
+    this.previewedCardId = null;
+    this.render();
   }
 
   onLeave(): void {
-    // Abandon any commit flight: its continuation must not resolve a round
-    // for a battle being left.
-    this.flightSeq++;
-    this.finishFlight();
     // React shell supplies onExit so Back returns to the menu; fall back to
     // the in-Phaser menu when launched standalone (legacy/dev path).
     if (this.onExit) {
@@ -412,77 +383,16 @@ export class BattleScene extends Phaser.Scene {
     this.scene.start("ClassSelectScene");
   }
 
-  // Settle + clean up any commit flight without landing it. Resolves the
-  // flight promise so awaiters never hang; landing is skipped via the seq.
-  finishFlight(): void {
-    this.flightSeq++;
-    this.flightTween?.stop();
-    this.flightTween = null;
-    this.flightView?.destroy();
-    this.flightView = null;
-    this.flightResolve?.();
-    this.flightResolve = null;
-    this.flightPromise = null;
-  }
-
-  // Toss the committed card from the fan into its arena slot, then continue.
-  // Input stays locked (recapPlaying) from flight start through the recap,
-  // so the 250ms window can't double-commit. Blindness is preserved: the CPU
-  // still picks at resolve time, seeing nothing.
-  beginFlight(card: Card, onLanded: () => void): void {
-    this.finishFlight(); // supersede anything stale (defensive; normally idle)
-    const seq = ++this.flightSeq;
-    // The preview becomes the flight: clear pop state so the fan redraws
-    // whole (the card is still in hand until resolve removes it).
-    this.previewedCardId = null;
-    this.animatePreview = false;
-    this.previewedView = null;
-    this.dismissTween?.stop();
-    this.dismissTween = null;
-    this.pendingPlay = { playerCard: card, round: this.battle.round, cpuRevealed: false };
-    this.recapPlaying = true;
-    this.render();
-
-    const idx = this.battle.player.hand.findIndex((c) => c.id === card.id);
-    const step = CARD_W - FAN_OVERLAP;
-    const totalW = this.battle.player.hand.length * CARD_W - Math.max(0, this.battle.player.hand.length - 1) * FAN_OVERLAP;
-    const fx = GAME_WIDTH / 2 - totalW / 2 + Math.max(0, idx) * step;
-    const { container } = drawCardFace(this, cardFaceData(card), CARD_W, CARD_H);
-    container.setPosition(fx, HAND_Y);
-    this.flightLayer.add(container);
-    this.flightView = container;
-
-    const slotX = GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W + (SLOT_W - CARD_W) / 2;
-    const slotY = SLOT_Y + (SLOT_H - CARD_H) / 2;
-    let resolveFlight!: () => void;
-    this.flightPromise = new Promise<void>((resolve) => {
-      resolveFlight = resolve;
-    });
-    this.flightResolve = resolveFlight;
-    this.flightTween = this.tweens.add({
-      targets: container,
-      x: slotX,
-      y: slotY,
-      duration: FLIGHT_DURATION,
-      ease: "Cubic.easeOut",
-      onComplete: () => {
-        this.flightTween = null;
-        this.flightView = null;
-        container.destroy();
-        this.flightPromise = null;
-        this.flightResolve = null;
-        resolveFlight();
-        if (seq !== this.flightSeq || !this.sys.isActive()) return;
-        onLanded();
-      },
-    });
+  // AP left after the cards picked so far.
+  plannedAp(): number {
+    return checkPlan(this.battle.player, this.staged).ap;
   }
 
   statusMessage(): string {
     if (this.battle.winner) return `${fighterName(this.battle.winner)} wins! Press "Restart" to play again.`;
     if (this.battle.draw) return `Draw! Press "Restart" to play again.`;
     if (this.handHint) return `Round ${this.battle.round} — ${this.handHint}`;
-    return `Round ${this.battle.round} — pick a card (you have ${this.battle.player.ap} AP) or rest. The CPU is choosing at the same time.`;
+    return `Round ${this.battle.round} — ${this.plannedAp()}/${this.battle.player.maxAp} AP left. Play cards, then End turn. The CPU is choosing at the same time.`;
   }
 
   // --- scene ---------------------------------------------------------------
@@ -491,22 +401,8 @@ export class BattleScene extends Phaser.Scene {
     useRenderScale(this);
     this.onExit = data.onExit ?? null;
     this.recapPlaying = false;
-    this.previewedCardId = null;
-    this.animatePreview = false;
-    this.previewedView = null;
-    this.dismissTween = null;
-    this.pendingPlay = null;
-    this.flightSeq++; // abandon any flight continuation from a previous life
-    this.flightTween = null;
-    this.flightView = null;
-    this.flightPromise = null;
-    this.flightResolve = null;
-    this.slotViews = {
-      player: { card: null, isBack: false },
-      cpu: { card: null, isBack: false },
-    };
-    this.previewedView = null;
-    this.dismissTween = null;
+    this.clearPlanning();
+    this.pendingTurn = null;
     this.shownHp = null; // { player, cpu } while a recap is counting HP down
     this.panelViews = {};
     this.recapSpeed = readRecapSpeed();
@@ -582,7 +478,6 @@ export class BattleScene extends Phaser.Scene {
     this.handContainer = this.add.container(0, HAND_Y);
     this.fieldContainer = this.add.container(0, 0);
     this.slotsContainer = this.add.container(0, 0);
-    this.flightLayer = this.add.container(0, 0);
 
     const ultimate = createButton(this, BUTTON_X, ULTIMATE_BUTTON_Y, BUTTON_W, BUTTON_H, "Use Ultimate", {
       color: COLORS.ultimate,
@@ -591,16 +486,16 @@ export class BattleScene extends Phaser.Scene {
     });
     this.ultimateButton = ultimate;
 
+    this.endTurnButton = createButton(this, BUTTON_X, END_TURN_BUTTON_Y, BUTTON_W, BUTTON_H, "End turn", {
+      color: AP_GEM_COLOR,
+      hoverColor: 0x4a95e0,
+      onClick: () => this.onEndTurnClick(),
+    });
+
     createButton(this, BUTTON_X, LEAVE_BUTTON_Y, BUTTON_W, BUTTON_H, this.leaveLabel, {
       color: COLORS.restart,
       hoverColor: COLORS.restartHover,
       onClick: () => this.onLeave(),
-    });
-
-    this.restButton = createButton(this, BUTTON_X, REST_BUTTON_Y, BUTTON_W, BUTTON_H, `Rest (+${AP_RULES.restBonus} AP)`, {
-      color: AP_GEM_COLOR,
-      hoverColor: 0x4a95e0,
-      onClick: () => this.onRestClick(),
     });
 
     this.add
@@ -639,6 +534,9 @@ export class BattleScene extends Phaser.Scene {
       this.scrollLog(Math.sign(dy) * LOG_SCROLL_STEP);
     });
 
+    // The center card preview sits above everything else.
+    this.previewLayer = this.add.container(0, 0).setDepth(900);
+
     this.render();
     loadCardArt(this, allCards(), () => this.render());
   }
@@ -664,29 +562,64 @@ export class BattleScene extends Phaser.Scene {
     this.logScrollThumb.setPosition(LOG_X + LOG_W - 6, thumbY);
   }
 
+  // A hand card was clicked: show it big in the middle of the screen.
   onCardClick(cardId: number): void {
     if (!this.canAct()) return;
-    const action = cardAction(this.battle.player, cardId);
-    if (!action || action.kind !== "card") return;
-    // Preview state was already cleared by the committing click; fly first,
-    // resolve on landing. Ultimate clicks skip the flight (no hand card).
-    this.beginFlight(action.card, () => this.commitAction(action));
+    this.previewedCardId = cardId;
+    this.handHint = null;
+    this.render();
   }
 
+  // The previewed card was clicked again: play it onto the arena slot (it
+  // only leaves the hand for real when the turn resolves).
+  confirmPreview(): void {
+    const card = this.battle.player.hand.find((c) => c.id === this.previewedCardId);
+    this.previewedCardId = null;
+    if (!card || !this.canAct()) return this.render();
+    const reason = unplayableReason(this.battle.player, card, this.staged);
+    if (reason) {
+      this.handHint = `can't play ${card.name}: ${reason}.`;
+      return this.render();
+    }
+    this.staged = [...this.staged, card];
+    playSfx("card");
+    this.render();
+  }
+
+  // A picked card was clicked on the arena slot: take it back. Cards picked
+  // after it stay only if the turn is still payable without it.
+  unstage(cardId: number): void {
+    if (!this.canAct()) return;
+    const rest = this.staged.filter((c) => c.id !== cardId);
+    const kept: Card[] = [];
+    for (const card of rest) if (canPlayCard(this.battle.player, card, kept)) kept.push(card);
+    this.staged = kept;
+    if (this.stagedUltimate && checkPlan(this.battle.player, kept, true).problem) this.stagedUltimate = false;
+    this.handHint = null;
+    this.render();
+  }
+
+  // Ultimate is a toggle: it joins this turn when it's ended.
   onUltimateClick(): void {
     if (!this.canAct()) return;
-    const action = ultimateAction(this.battle.player);
-    if (!action) return;
-    this.pendingPlay = { playerCard: null, round: this.battle.round, cpuRevealed: false };
+    if (!this.stagedUltimate && checkPlan(this.battle.player, this.staged, true).problem) return;
+    this.stagedUltimate = !this.stagedUltimate;
     this.render();
-    this.commitAction(action);
   }
 
-  onRestClick(): void {
+  onEndTurnClick(): void {
     if (!this.canAct()) return;
-    this.pendingPlay = { playerCard: null, round: this.battle.round, cpuRevealed: false };
-    this.render();
-    this.commitAction(restAction());
+    const action = planAction(
+      this.battle.player,
+      this.staged.map((c) => c.id),
+      this.stagedUltimate
+    );
+    if (!action) {
+      this.handHint = "that turn can't be paid for any more -- take a card back.";
+      this.render();
+      return;
+    }
+    this.commitAction(action);
   }
 
   // --- round recap -----------------------------------------------------------
@@ -697,13 +630,14 @@ export class BattleScene extends Phaser.Scene {
 
   // Show the round that just resolved: draw the new state with the HP from
   // `before`, play the recap (which counts HP down as hits land), then draw
-  // the final state. Without both sides' lastAction (e.g. an online match on
+  // the final state. Without both sides' lastTurn (e.g. an online match on
   // a server that doesn't send it yet) it just redraws.
   async presentRound(before: HpPair): Promise<void> {
     const b = this.battle;
-    const playerAction: LastAction | null = b.player.lastAction;
-    const cpuAction: LastAction | null = b.cpu.lastAction;
-    if (!playerAction || !cpuAction) {
+    const playerTurn: TurnRecord | null = b.player.lastTurn;
+    const cpuTurn: TurnRecord | null = b.cpu.lastTurn;
+    if (!playerTurn || !cpuTurn) {
+      this.pendingTurn = null;
       this.render();
       return;
     }
@@ -711,16 +645,12 @@ export class BattleScene extends Phaser.Scene {
     this.recapPlaying = true;
     this.shownHp = { ...before };
     this.render();
-
-    // The commit flight may still be landing (slow tween, fast resolve path):
-    // the recap must start from settled slot faces, never mid-flight.
-    await this.flightPromise;
-    if (!this.sys.isActive()) return;
+    this.slotsContainer.setVisible(false); // the recap draws each play itself
 
     const slotX = (key: "player" | "cpu"): number =>
       key === "cpu" ? GAME_WIDTH / 2 - SLOT_TOTAL_W / 2 : GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W;
     const side = (key: "player" | "cpu", fighter: Fighter, who: string): RecapSide => ({
-      action: key === "player" ? playerAction : cpuAction,
+      turn: key === "player" ? playerTurn : cpuTurn,
       who,
       classId: fighter.classDef.id,
       className: shortName(fighter.classDef.name),
@@ -728,18 +658,11 @@ export class BattleScene extends Phaser.Scene {
       hp: before[key],
       panel: () => this.panelViews[key] as RecapPanel,
       fieldCenter: () => ({ x: (key === "cpu" ? CPU_FIELD_X : PLAYER_FIELD_X) + FIELD_W / 2, y: FIELD_Y + FIELD_H / 2 }),
-      slot: (): RecapSlotView | null => {
-        const view = this.slotViews[key];
-        if (!view) return null;
-        return { x: slotX(key), y: SLOT_Y, w: SLOT_W, h: SLOT_H, card: view.card, isBack: view.isBack, faceW: CARD_W, faceH: CARD_H };
-      },
-      revealSlot: (): void => {
-        if (this.pendingPlay) this.pendingPlay.cpuRevealed = true;
-      },
+      slot: { x: slotX(key), y: SLOT_Y, w: SLOT_W, h: SLOT_H, faceW: CARD_W, faceH: CARD_H },
     });
 
     playRoundRecap(this, {
-      round: playerAction.round,
+      round: playerTurn.round,
       stage: RECAP_STAGE,
       sides: {
         player: side("player", b.player, "You"),
@@ -749,7 +672,8 @@ export class BattleScene extends Phaser.Scene {
     }).finally(() => {
       this.recapPlaying = false;
       this.shownHp = null;
-      this.pendingPlay = null; // slots empty again until the next commit
+      this.pendingTurn = null; // slots empty again until the next turn
+      this.slotsContainer.setVisible(true);
       if (this.sys.isActive()) this.render();
     });
   }
@@ -907,10 +831,15 @@ export class BattleScene extends Phaser.Scene {
     this.drawSlots();
     this.renderHand(locked);
     this.renderLog();
+    this.drawPreview(locked);
 
     this.statusText.setText(this.statusMessage());
-    this.ultimateButton.setEnabled(!locked && canUseUltimate(this.battle.player));
-    this.restButton.setEnabled(!locked);
+    const ultimateReady = !checkPlan(this.battle.player, this.staged, true).problem;
+    this.ultimateButton.setEnabled(!locked && (this.stagedUltimate || ultimateReady));
+    (this.ultimateButton.container.getAt(1) as Phaser.GameObjects.Text).setText(this.stagedUltimate ? "Ultimate ✓ (undo)" : "Use Ultimate");
+    this.endTurnButton.setEnabled(!locked);
+    const plays = this.staged.length + (this.stagedUltimate ? 1 : 0);
+    (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn (${plays})` : "End turn (pass)");
 
     if (isBattleOver(this.battle) && !this.recapPlaying) this.showResult();
   }
@@ -998,9 +927,10 @@ export class BattleScene extends Phaser.Scene {
     });
     container.add(name);
 
-    // AP pill beside the name: current / cap.
+    // AP pill beside the name: left this turn / this turn's max (for you,
+    // after the cards picked so far).
     const apText = this.add
-      .text(0, 0, `AP ${fmt(fighter.ap)}/${AP_RULES.max}`, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: TEXT.white })
+      .text(0, 0, `AP ${fmt(fighter === this.battle.player && !this.pendingTurn ? this.plannedAp() : fighter.ap)}/${fighter.maxAp ?? fighter.ap}`, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: TEXT.white })
       .setOrigin(0, 0.5);
     const pillX = STRIP_PAD + name.width + 10;
     const pillW = apText.width + 16;
@@ -1295,99 +1225,96 @@ export class BattleScene extends Phaser.Scene {
   }
 
   renderHand(locked: boolean): void {
-    // A rebuild invalidates any glide-back target: kill it first so a dead
-    // container can never drive (or double-fire) a render.
-    this.dismissTween?.stop();
-    this.dismissTween = null;
     this.handContainer.removeAll(true);
-    const cards = this.battle.player.hand;
+    // Picked cards have moved onto the arena slot.
+    const stagedIds = new Set(this.staged.map((c) => c.id));
+    const cards = this.battle.player.hand.filter((c) => !stagedIds.has(c.id) && c.id !== this.previewedCardId);
     const step = CARD_W - FAN_OVERLAP;
     const totalW = cards.length * CARD_W - Math.max(0, cards.length - 1) * FAN_OVERLAP;
     const x0 = GAME_WIDTH / 2 - totalW / 2;
-
-    // Previewed card renders last so it floats above the fan.
-    for (let i = 0; i < cards.length; i++) {
-      const card = cards[i] as Card;
-      if (card.id === this.previewedCardId) continue;
-      this.drawHandCard(card, x0 + i * step, false, locked);
-    }
-    const pi = cards.findIndex((c) => c.id === this.previewedCardId);
-    if (pi !== -1) this.drawHandCard(cards[pi] as Card, x0 + pi * step, true, locked);
+    cards.forEach((card, i) => this.drawHandCard(card, x0 + i * step, locked));
   }
 
-  drawHandCard(card: Card, x: number, previewed: boolean, locked: boolean): void {
+  drawHandCard(card: Card, x: number, locked: boolean): void {
     const { container: cardContainer, bg } = drawCardFace(this, cardFaceData(card), CARD_W, CARD_H);
-    const blocked = unplayableReason(this.battle.player, card);
-    if (previewed) {
-      const ring = this.add.graphics();
-      ring.lineStyle(3, PREVIEW_RING, 1);
-      ring.strokeRoundedRect(-6, -6, CARD_W + 12, CARD_H + 12, 14);
-      cardContainer.add(ring);
-      const popX = x - (CARD_W * (POP_SCALE - 1)) / 2;
-      this.previewedView = cardContainer;
-      this.previewedSlotX = x;
-      if (this.animatePreview) {
-        // Spring into place from the slot (selection moment only); every
-        // other rebuild lands instantly so the pop never replays.
-        this.animatePreview = false;
-        cardContainer.setPosition(x, 0).setScale(1);
-        this.tweens.add({
-          targets: cardContainer,
-          x: popX,
-          y: -POP_LIFT,
-          scale: POP_SCALE,
-          duration: 140,
-          ease: "Back.easeOut",
-        });
-      } else {
-        cardContainer.setPosition(popX, -POP_LIFT).setScale(POP_SCALE);
-      }
-    } else {
-      cardContainer.setPosition(x, 0);
-    }
-
-    if (!locked && blocked) {
-      // Can't pay for it: dimmed, and a click just says why.
-      cardContainer.setAlpha(0.55);
-      bg.on("pointerdown", () => {
-        this.handHint = `can't play ${card.name}: ${blocked}.`;
-        if (this.previewedCardId !== null) this.dismissPreview();
-        else this.statusText.setText(this.statusMessage());
-      });
-    } else if (!locked) {
-      bg.on("pointerover", (pointer: Phaser.Input.Pointer) => {
-        if (pointer.wasTouch || this.previewedCardId === card.id) return;
-        this.tweens.killTweensOf(cardContainer);
-        this.tweens.add({ targets: cardContainer, y: -HOVER_LIFT, duration: 100 });
-      });
-      bg.on("pointerout", () => {
-        if (this.previewedCardId === card.id) return; // keep the pop
-        this.tweens.killTweensOf(cardContainer);
-        this.tweens.add({ targets: cardContainer, y: 0, duration: 100 });
-      });
-      bg.on("pointerdown", () => {
-        if (this.previewedCardId === card.id) {
-          this.onCardClick(card.id); // second click commits
-          return;
-        }
-        this.previewedCardId = card.id;
-        this.animatePreview = true;
-        this.handHint = null;
-        this.render();
-      });
-    } else {
+    cardContainer.setPosition(x, 0);
+    if (locked) {
       cardContainer.setAlpha(0.5);
       bg.disableInteractive();
+    } else {
+      // Can't be paid for after what's already picked: dimmed, but it can
+      // still be opened to read (the preview says why it can't be played).
+      if (unplayableReason(this.battle.player, card, this.staged)) cardContainer.setAlpha(0.55);
+      // Hover expands the card, growing up from its bottom edge.
+      bg.on("pointerover", (pointer: Phaser.Input.Pointer) => {
+        if (pointer.wasTouch) return;
+        this.handContainer.bringToTop(cardContainer);
+        this.tweens.killTweensOf(cardContainer);
+        this.tweens.add({
+          targets: cardContainer,
+          x: x - (CARD_W * (HOVER_SCALE - 1)) / 2,
+          y: -HOVER_LIFT - CARD_H * (HOVER_SCALE - 1),
+          scale: HOVER_SCALE,
+          duration: 100,
+        });
+      });
+      bg.on("pointerout", () => {
+        this.tweens.killTweensOf(cardContainer);
+        this.tweens.add({ targets: cardContainer, x, y: 0, scale: 1, duration: 100 });
+      });
+      bg.on("pointerdown", () => this.onCardClick(card.id));
     }
-
     this.handContainer.add(cardContainer);
   }
 
-  // Middle arena slots holding each side's last resolved card. Fed solely by
-  // post-resolution lastAction -- vacant pre-first-commit -- so the CPU slot
-  // can never leak a face before reveal.
-  // Face-down back for the CPU slot: the pending round exists, but the move
-  // must stay hidden until the recap's flip reveal.
+  // The previewed card, full size in the middle of the screen over a dimmed
+  // board: click it to play it, click anywhere else to put it back.
+  drawPreview(locked: boolean): void {
+    this.previewLayer.removeAll(true);
+    const card = this.battle.player.hand.find((c) => c.id === this.previewedCardId);
+    if (!card || locked) return;
+
+    const dim = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x05070d, 0.6).setOrigin(0, 0).setInteractive();
+    dim.on("pointerdown", () => this.dismissPreview());
+    this.previewLayer.add(dim);
+
+    const w = CARD_W * PREVIEW_SCALE;
+    const h = CARD_H * PREVIEW_SCALE;
+    const x = GAME_WIDTH / 2 - w / 2;
+    const y = GAME_HEIGHT / 2 - h / 2 - 20;
+    const { container, bg } = drawCardFace(this, cardFaceData(card), w, h, { scale: PREVIEW_SCALE });
+    const ring = this.add.graphics();
+    ring.lineStyle(4, PREVIEW_RING, 1);
+    ring.strokeRoundedRect(-7, -7, w + 14, h + 14, 16);
+    container.add(ring);
+    bg.on("pointerdown", () => this.confirmPreview());
+    this.previewLayer.add(container);
+
+    const reason = unplayableReason(this.battle.player, card, this.staged);
+    const after = checkPlan(this.battle.player, [...this.staged, card]).ap;
+    const hint = reason
+      ? `Can't play this now: ${reason}.\nClick anywhere to put it back.`
+      : `Click the card to play it (AP ${this.plannedAp()} → ${after}).\nClick anywhere else to put it back.`;
+    this.previewLayer.add(
+      textShadow(
+        this.add
+          .text(GAME_WIDTH / 2, y + h + 22, hint, {
+            fontFamily: FONT_FAMILY,
+            fontSize: "15px",
+            fontStyle: "700",
+            color: reason ? "#ff8a80" : TEXT.white,
+            align: "center",
+          })
+          .setOrigin(0.5, 0)
+      )
+    );
+
+    // Pop in from slightly smaller, centered.
+    container.setAlpha(0).setScale(0.85).setPosition(x + (w * 0.15) / 2, y + (h * 0.15) / 2);
+    this.tweens.add({ targets: container, alpha: 1, scale: 1, x, y, duration: 140, ease: "Back.easeOut" });
+  }
+
+  // Face-down card for the opponent's slot while a sent turn resolves.
   drawCardBack(): Phaser.GameObjects.Container {
     const container = this.add.container(0, 0);
     const g = this.add.graphics();
@@ -1407,58 +1334,71 @@ export class BattleScene extends Phaser.Scene {
     return container;
   }
 
-  // Arena slots show the in-flight round only: the committed player face (or
-  // nothing pre-landing... the flight clone covers the gap), the CPU back
-  // until the recap flips it, and vacant frames otherwise. lastAction faces
-  // are NOT drawn here -- the recap performs from these live objects instead
-  // of minting duplicates, then they fade and the slots empty again.
+  // Arena slots. Yours holds the cards picked this turn (shrunk and fanned;
+  // click one to take it back) -- only this client sees them. Once the turn
+  // is sent, the opponent's slot shows a face-down card until the recap.
   drawSlots(): void {
     this.slotsContainer.removeAll(true);
-    const pending = this.pendingPlay;
-    const sides: Array<{ key: "player" | "cpu"; fighter: Fighter; x: number }> = [
-      { key: "cpu", fighter: this.battle.cpu, x: GAME_WIDTH / 2 - SLOT_TOTAL_W / 2 },
-      { key: "player", fighter: this.battle.player, x: GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W },
+    const pending = this.pendingTurn;
+    const muted = (x: number, text: string): Phaser.GameObjects.Text =>
+      this.add
+        .text(x + SLOT_W / 2, SLOT_Y + SLOT_H / 2, text, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted, align: "center" })
+        .setOrigin(0.5);
+    const sides: Array<{ key: "player" | "cpu"; x: number }> = [
+      { key: "cpu", x: GAME_WIDTH / 2 - SLOT_TOTAL_W / 2 },
+      { key: "player", x: GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W },
     ];
-    for (const { key, fighter, x } of sides) {
+    for (const { key, x } of sides) {
       const frame = this.add.graphics();
       frame.lineStyle(2, 0x4a5573, 1);
       frame.strokeRoundedRect(x, SLOT_Y, SLOT_W, SLOT_H, 10);
       this.slotsContainer.add(frame);
-      const fx = x + (SLOT_W - CARD_W) / 2;
-      const fy = SLOT_Y + (SLOT_H - CARD_H) / 2;
 
-      let card: Phaser.GameObjects.Container | null = null;
-      let isBack = false;
-      if (key === "player" && pending?.playerCard) {
-        const { container } = drawCardFace(this, cardFaceData(pending.playerCard), CARD_W, CARD_H);
-        container.setPosition(fx, fy);
-        this.slotsContainer.add(container);
-        card = container;
-      } else if (key === "cpu" && pending) {
-        const last = fighter.lastAction;
-        if (last && last.round === pending.round && pending.cpuRevealed && last.kind !== "none") {
-          const { container } = drawCardFace(this, actionFace(last, ultimateName(fighter.classDef)), CARD_W, CARD_H);
-          container.setPosition(fx, fy);
-          this.slotsContainer.add(container);
-          card = container;
-        } else {
+      if (key === "cpu") {
+        if (pending) {
           const back = this.drawCardBack();
-          back.setPosition(fx, fy);
+          back.setPosition(x + (SLOT_W - CARD_W) / 2, SLOT_Y + (SLOT_H - CARD_H) / 2);
           this.slotsContainer.add(back);
-          card = back;
-          isBack = true;
+        } else {
+          this.slotsContainer.add(muted(x, "—"));
         }
-      } else {
-        const hint = this.add
-          .text(x + SLOT_W / 2, SLOT_Y + SLOT_H / 2, "—", {
+        continue;
+      }
+
+      const cards = pending ? pending.cards : this.staged;
+      const ultimate = pending ? pending.ultimate : this.stagedUltimate;
+      const faces: Array<{ data: CardFaceData; cardId: number | null }> = cards.map((c) => ({ data: cardFaceData(c), cardId: c.id }));
+      if (ultimate) {
+        faces.push({ data: { category: "ultimate", name: ultimateName(this.battle.player.classDef), description: "" }, cardId: null });
+      }
+      if (faces.length === 0) {
+        this.slotsContainer.add(muted(x, pending ? "Pass" : "Click a card,\nthen click it again\nto play it here"));
+        continue;
+      }
+      const w = CARD_W * STAGE_SCALE;
+      const h = CARD_H * STAGE_SCALE;
+      const step = faces.length > 1 ? Math.min(w + 4, (SLOT_W - 10 - w) / (faces.length - 1)) : 0;
+      const x0 = x + (SLOT_W - (w + step * (faces.length - 1))) / 2;
+      faces.forEach(({ data, cardId }, i) => {
+        const { container, bg } = drawCardFace(this, data, w, h, { scale: STAGE_SCALE });
+        container.setPosition(x0 + i * step, SLOT_Y + (SLOT_H - h) / 2 + 8);
+        if (!pending && this.canAct()) {
+          bg.on("pointerdown", () => (cardId === null ? this.onUltimateClick() : this.unstage(cardId)));
+        } else {
+          bg.disableInteractive();
+        }
+        this.slotsContainer.add(container);
+      });
+      this.slotsContainer.add(
+        this.add
+          .text(x + SLOT_W / 2, SLOT_Y + 6, pending ? "SENT" : "CLICK ONE TO TAKE IT BACK", {
             fontFamily: FONT_FAMILY,
-            fontSize: "12px",
+            fontSize: "9px",
+            fontStyle: "700",
             color: TEXT.muted,
           })
-          .setOrigin(0.5);
-        this.slotsContainer.add(hint);
-      }
-      this.slotViews[key] = { card, isBack };
+          .setOrigin(0.5, 0)
+      );
     }
   }
 

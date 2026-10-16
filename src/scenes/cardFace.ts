@@ -7,13 +7,13 @@ import { COLORS, TEXT, FONT_FAMILY, roundedRect } from "./theme.ts";
 import { CARD_ICON_KEY, ULTIMATE_ICON_KEY, damageAccentColor, elementAccentColor } from "../phaserIcons.ts";
 import { loadedArtKey } from "../cardArt.ts";
 import { cardCost, type Card } from "../model/cardTypes.ts";
-import { describeCard, type LastAction } from "../model/engine.ts";
+import { describeCard, type PlayRecord } from "../model/engine.ts";
 import type { DamageType, Element } from "../model/damageTypes.ts";
 
 export const AP_GEM_COLOR = 0x2f7fd0;
 
 // card: { cardId, category, name, damageType, description } -- a hand card
-// instance plus its describeCard() text, or a fighter's lastAction. The
+// instance plus its describeCard() text, or one of a fighter's plays. The
 // category "ultimate" draws the gold ultimate card.
 export interface CardFaceData {
   cardId?: string | null;
@@ -38,13 +38,12 @@ export function cardFaceData(card: Card): CardFaceData {
   };
 }
 
-// Face data for a resolved action (a fighter's lastAction): the card it
-// played, the gold ultimate card, or a plain "Rest" card.
-export function actionFace(action: LastAction, ultimateName: string): CardFaceData {
+// Face data for one resolved play (from a fighter's lastTurn): the card, or
+// the gold ultimate card.
+export function actionFace(action: PlayRecord, ultimateName: string): CardFaceData {
   if (action.kind === "ultimate") {
     return { category: "ultimate", name: ultimateName, description: `${action.damage ?? 0} damage` };
   }
-  if (action.kind === "rest") return { category: "rest", name: "Rest", description: `+${action.apGained ?? 0} AP` };
   return {
     cardId: action.cardId,
     category: action.category ?? "",

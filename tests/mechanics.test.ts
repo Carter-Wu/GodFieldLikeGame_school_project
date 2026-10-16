@@ -1,5 +1,5 @@
-// The Card Design mechanics: AP costs, priority + dice, interrupts,
-// elements and statuses, monsters, and the new classes' starter decks.
+// The Card Design mechanics: multi-card turns paid with AP, priority + dice,
+// interrupts, elements and statuses, monsters, and the new classes' decks.
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createCardInstance, type Card } from "../src/model/cardTypes.ts";
@@ -7,14 +7,17 @@ import { allClasses, findCardById, findClassById, useLocalCatalog } from "../src
 import {
   AP_RULES,
   cardAction,
+  checkPlan,
   createBattle,
+  passAction,
+  planAction,
   resolveRound,
-  restAction,
   setRandomSource,
   ultimateAction,
   type Action,
   type Battle,
   type Fighter,
+  type PlayRecord,
 } from "../src/model/engine.ts";
 import { deserializeBattle, serializeBattle } from "../src/model/serialize.ts";
 import { starterDeckList, validateDeckList } from "../src/model/decks.ts";
@@ -28,11 +31,13 @@ afterEach(() => {
 });
 
 // A battle with empty decks and hands, so each test deals exactly the cards
-// it needs. Both sides get plenty of AP unless the test says otherwise.
+// it needs. Both sides get the max AP unless the test says otherwise.
 function freshBattle(playerClass = "guardian", cpuClass = "pyromancer"): Battle {
   const battle = createBattle(findClassById(playerClass), findClassById(cpuClass), { playerDeck: [], cpuDeck: [] });
-  battle.player.ap = AP_RULES.max;
-  battle.cpu.ap = AP_RULES.max;
+  for (const f of [battle.player, battle.cpu]) {
+    f.ap = AP_RULES.max;
+    f.maxAp = AP_RULES.max;
+  }
   return battle;
 }
 
@@ -44,13 +49,18 @@ function give(fighter: Fighter, cardId: string): Card {
   return card;
 }
 
-function play(fighter: Fighter, cardId: string): Action {
-  const action = cardAction(fighter, give(fighter, cardId).id);
-  if (!action) throw new Error(`can't play ${cardId}`);
+// Deal these cards and play them all this turn, in order.
+function play(fighter: Fighter, ...cardIds: string[]): Action {
+  const action = planAction(
+    fighter,
+    cardIds.map((id) => give(fighter, id).id)
+  );
+  if (!action) throw new Error(`can't play ${cardIds.join(", ")}`);
   return action;
 }
 
-const NOTHING: Action = { kind: "none" };
+const plays = (fighter: Fighter): PlayRecord[] => fighter.lastTurn?.plays ?? [];
+const NOTHING = passAction();
 
 describe("new classes", () => {
   it("adds Black Mage, Master Craftsman and Necromancer with legal starter decks", () => {
@@ -67,40 +77,58 @@ describe("new classes", () => {
   });
 });
 
-describe("AP", () => {
-  it("spends a card's cost and regains AP each round", () => {
-    const b = freshBattle();
-    b.player.ap = 3;
-    resolveRound(b, play(b.player, "heavy_slam"), NOTHING); // costs 3
-    expect(b.player.ap).toBe(AP_RULES.perRound);
+describe("AP and multi-card turns", () => {
+  it("starts at the start AP, then max AP grows by one a round and refills", () => {
+    const b = createBattle(findClassById("guardian"), findClassById("pyromancer"), { playerDeck: [], cpuDeck: [] });
+    expect(b.player.ap).toBe(AP_RULES.start);
+    resolveRound(b, NOTHING, NOTHING);
+    expect(b.player.maxAp).toBe(AP_RULES.start + AP_RULES.growth);
+    expect(b.player.ap).toBe(b.player.maxAp);
   });
 
-  it("won't play a card you can't afford", () => {
-    const b = freshBattle();
-    b.player.ap = 2;
-    const card = give(b.player, "heavy_slam");
-    expect(cardAction(b.player, card.id)).toBeNull();
+  it("plays every card of a turn the AP pays for", () => {
+    const b = freshBattle("guardian", "black_mage");
+    b.player.ap = 4;
+    const hp = b.cpu.hp;
+    resolveRound(b, play(b.player, "quick_jab", "shield_bash", "iron_wall"), NOTHING); // 1 + 2 + 1
+    expect(plays(b.player).map((p) => p.name)).toEqual(["Quick Jab", "Shield Bash", "Iron Wall"]);
+    expect(hp - b.cpu.hp).toBe(3 - 1 + (6 - 1)); // both attacks land, minus DEF 1 each
+    expect(b.player.activeDefends.physical).toBeDefined();
   });
 
-  it("rest gives bonus AP, capped at the max", () => {
+  it("refuses a turn that costs more AP than you have", () => {
     const b = freshBattle();
-    b.player.ap = 1;
-    resolveRound(b, restAction(), NOTHING);
-    expect(b.player.ap).toBe(1 + AP_RULES.restBonus + AP_RULES.perRound);
-    b.player.ap = AP_RULES.max;
-    resolveRound(b, restAction(), NOTHING);
-    expect(b.player.ap).toBe(AP_RULES.max);
+    b.player.ap = 5;
+    const ids = ["quick_jab", "shield_bash", "heavy_slam"].map((id) => give(b.player, id).id); // 1 + 2 + 3
+    expect(planAction(b.player, ids)).toBeNull();
+    expect(checkPlan(b.player, b.player.hand).problem).toMatch(/needs 3 AP/);
   });
 
-  it("Dark Pact trades HP for AP and a card", () => {
+  it("loses unspent AP: it refills to the new max instead of carrying over", () => {
+    const b = freshBattle();
+    b.player.ap = 5;
+    b.player.maxAp = 5;
+    resolveRound(b, NOTHING, NOTHING);
+    expect(b.player.ap).toBe(6);
+  });
+
+  it("Dark Pact's AP pays for cards picked after it the same turn", () => {
     const b = freshBattle("black_mage");
     b.player.ap = 0;
     const hp = b.player.hp;
-    b.player.deck = [createCardInstance(findCardById("shadow_bolt")!)];
-    resolveRound(b, play(b.player, "dark_pact"), NOTHING);
+    const cpuHp = b.cpu.hp;
+    resolveRound(b, play(b.player, "dark_pact", "shadow_bolt"), NOTHING);
     expect(b.player.hp).toBe(hp - 4);
-    expect(b.player.ap).toBe(3 + AP_RULES.perRound);
-    expect(b.player.hand.map((c) => c.cardId)).toContain("shadow_bolt");
+    expect(cpuHp - b.cpu.hp).toBe(6 - 3); // magic 6 minus pyromancer MR 3
+  });
+
+  it("can fire the ultimate alongside cards", () => {
+    const b = freshBattle("guardian", "black_mage");
+    b.player.ultimateMeter = b.player.classDef.ultimate.cost;
+    const action = planAction(b.player, [give(b.player, "quick_jab").id], true);
+    expect(action).not.toBeNull();
+    resolveRound(b, action!, NOTHING);
+    expect(plays(b.player).map((p) => p.kind)).toEqual(["card", "ultimate"]);
   });
 
   it("adds a card's ultimate charge to the meter", () => {
@@ -112,41 +140,46 @@ describe("AP", () => {
 });
 
 describe("priority and dice", () => {
-  it("the higher priority strikes first, and a knockout cancels the other attack", () => {
+  it("the higher priority strikes first, and a knockout cancels the other side's strikes", () => {
     const b = freshBattle();
     b.cpu.hp = 1;
-    resolveRound(b, play(b.player, "quick_jab"), play(b.cpu, "fire_lance"));
+    resolveRound(b, play(b.player, "quick_jab"), play(b.cpu, "fire_lance", "ember_dart"));
     expect(b.winner).toBe(b.player);
     expect(b.player.hp).toBe(b.player.maxHp);
-    expect(b.player.lastAction?.order).toBe(1);
-    expect(b.cpu.lastAction?.cancelled).toBe("knocked_out");
+    expect(plays(b.player)[0]?.order).toBe(1);
+    expect(plays(b.cpu).map((p) => p.cancelled)).toEqual(["knocked_out", "knocked_out"]);
   });
 
-  it("equal priority rolls dice, highest first", () => {
+  it("ties between the sides go to the dice; a side's own strikes keep their order", () => {
     const b = freshBattle();
     const rolls = [0.1, 0.9]; // player 1, cpu 6
     setRandomSource(() => rolls.shift() ?? 0.5);
-    resolveRound(b, play(b.player, "shield_bash"), play(b.cpu, "ember_dart"));
-    expect(b.player.lastAction?.dice).toBe(1);
-    expect(b.cpu.lastAction?.dice).toBe(6);
-    expect(b.cpu.lastAction?.order).toBe(1);
-    expect(b.player.lastAction?.order).toBe(2);
+    resolveRound(b, play(b.player, "shield_bash"), play(b.cpu, "ember_dart", "fire_lance"));
+    expect(b.player.lastTurn?.dice).toBe(1);
+    expect(b.cpu.lastTurn?.dice).toBe(6);
+    expect(plays(b.cpu).map((p) => p.order)).toEqual([1, 2]);
+    expect(plays(b.player)[0]?.order).toBe(3);
   });
 
-  it("an interrupting attack that lands cancels the slower attack card", () => {
+  it("no dice when nothing ties", () => {
+    const b = freshBattle();
+    resolveRound(b, play(b.player, "quick_jab"), play(b.cpu, "ember_dart"));
+    expect(b.player.lastTurn?.dice).toBeNull();
+  });
+
+  it("a landed interrupt cancels only the opponent's next attack card", () => {
     const b = freshBattle("guardian", "black_mage");
     const hp = b.player.hp;
-    resolveRound(b, play(b.player, "shield_rush"), play(b.cpu, "shadow_bolt"));
-    expect(b.cpu.lastAction?.cancelled).toBe("interrupted");
-    expect(b.player.hp).toBe(hp);
+    resolveRound(b, play(b.player, "shield_rush"), play(b.cpu, "shadow_bolt", "vampiric_touch"));
+    expect(plays(b.cpu).map((p) => p.cancelled)).toEqual(["interrupted", null]);
+    expect(hp - b.player.hp).toBe(5 - 2); // Vampiric Touch still lands, minus MR 2
   });
 
   it("slowed lowers priority", () => {
     const b = freshBattle();
     b.player.statuses.slowed = { potency: 2, remaining: 2 };
-    setRandomSource(() => 0.5);
     resolveRound(b, play(b.player, "quick_jab"), play(b.cpu, "ember_dart"));
-    expect(b.cpu.lastAction?.order).toBe(1);
+    expect(plays(b.cpu)[0]?.order).toBe(1);
   });
 });
 
@@ -156,25 +189,24 @@ describe("elements and statuses", () => {
     const hp = b.player.hp;
     resolveRound(b, NOTHING, play(b.cpu, "ignite")); // burn 3 for 3 rounds
     expect(b.player.hp).toBe(hp - 3);
-    expect(b.player.lastAction?.statusTicks).toEqual([{ status: "burning", damage: 3 }]);
+    expect(b.player.lastTurn?.statusTicks).toEqual([{ status: "burning", damage: 3 }]);
     resolveRound(b, NOTHING, NOTHING);
     resolveRound(b, NOTHING, NOTHING);
     expect(b.player.hp).toBe(hp - 9);
     expect(b.player.statuses.burning).toBeUndefined();
   });
 
-  it("poison stacks", () => {
+  it("poison stacks, even twice in one turn", () => {
     const b = freshBattle("guardian", "necromancer");
-    resolveRound(b, NOTHING, play(b.cpu, "plague_cloud"));
-    resolveRound(b, NOTHING, play(b.cpu, "plague_cloud"));
+    resolveRound(b, NOTHING, play(b.cpu, "plague_cloud", "plague_cloud"));
     expect(b.player.statuses.poison?.potency).toBe(4);
   });
 
-  it("wet targets take +50% electric damage", () => {
+  it("Splash then Spark in one turn: wet makes the shock hit 50% harder", () => {
     const b = freshBattle("pyromancer", "guardian");
-    b.cpu.statuses.wet = { potency: 1, remaining: 2 };
     const hp = b.cpu.hp;
-    resolveRound(b, play(b.player, "spark"), NOTHING); // magic 3 -> 4.5 -> 5, minus MR 2
+    resolveRound(b, play(b.player, "splash", "spark"), NOTHING);
+    // splash: magic 2 - MR 2 = 0; spark: 3 -> 4.5 -> 5, minus MR 2 = 3
     expect(hp - b.cpu.hp).toBe(3);
   });
 
@@ -184,8 +216,6 @@ describe("elements and statuses", () => {
     resolveRound(b, play(b.player, "splash"), NOTHING);
     expect(b.cpu.statuses.burning).toBeUndefined();
     expect(b.cpu.statuses.wet).toBeDefined();
-    resolveRound(b, NOTHING, NOTHING);
-    b.cpu.statuses.wet = { potency: 1, remaining: 2 };
     resolveRound(b, play(b.player, "ignite"), NOTHING);
     expect(b.cpu.statuses.burning).toBeUndefined();
     expect(b.cpu.statuses.wet).toBeUndefined(); // the fire dried them instead
@@ -215,7 +245,7 @@ describe("monsters", () => {
     const hp = b.cpu.hp;
     resolveRound(b, NOTHING, NOTHING); // skeleton: 2 physical, ignores DEF
     expect(hp - b.cpu.hp).toBe(2);
-    expect(b.player.lastAction?.monsterHits).toHaveLength(1);
+    expect(b.player.lastTurn?.monsterHits).toHaveLength(1);
   });
 
   it("fight the enemy's monsters before the enemy fighter", () => {
@@ -238,17 +268,18 @@ describe("monsters", () => {
 
   it("field attacks hit every enemy monster", () => {
     const b = freshBattle("pyromancer", "necromancer");
-    resolveRound(b, NOTHING, play(b.cpu, "raise_skeleton"));
-    resolveRound(b, NOTHING, play(b.cpu, "grave_guard"));
+    resolveRound(b, NOTHING, play(b.cpu, "raise_skeleton", "grave_guard"));
     resolveRound(b, play(b.player, "inferno"), NOTHING);
     expect(b.cpu.field.map((m) => m.name)).toEqual(["Grave Guard"]);
   });
 
-  it("can't be played onto a full field", () => {
+  it("a turn can't summon past a full field", () => {
     const b = freshBattle("necromancer");
-    for (let i = 0; i < 3; i++) resolveRound(b, play(b.player, "raise_skeleton"), NOTHING);
-    b.player.ap = AP_RULES.max;
-    expect(cardAction(b.player, give(b.player, "raise_skeleton").id)).toBeNull();
+    const ids = ["raise_skeleton", "raise_skeleton", "grave_guard", "raise_skeleton"].map((id) => give(b.player, id).id);
+    expect(planAction(b.player, ids.slice(0, 3))).not.toBeNull();
+    expect(planAction(b.player, ids)).toBeNull();
+    resolveRound(b, planAction(b.player, ids.slice(0, 3))!, NOTHING);
+    expect(cardAction(b.player, ids[3]!)).toBeNull();
   });
 
   it("Necromancer's ultimate raises two skeletons", () => {
@@ -260,13 +291,14 @@ describe("monsters", () => {
 });
 
 describe("serialization", () => {
-  it("keeps AP, monsters and statuses", () => {
+  it("keeps AP, monsters, statuses and the last turn", () => {
     const b = freshBattle("necromancer");
-    resolveRound(b, play(b.player, "raise_skeleton"), play(b.cpu, "ignite"));
+    resolveRound(b, play(b.player, "raise_skeleton", "bone_spear"), play(b.cpu, "ignite"));
     const restored = deserializeBattle(JSON.parse(JSON.stringify(serializeBattle(b))));
     expect(restored.player.ap).toBe(b.player.ap);
+    expect(restored.player.maxAp).toBe(b.player.maxAp);
     expect(restored.player.field).toEqual(b.player.field);
     expect(restored.player.statuses).toEqual(b.player.statuses);
-    expect(restored.player.lastAction).toEqual(b.player.lastAction);
+    expect(restored.player.lastTurn).toEqual(b.player.lastTurn);
   });
 });
