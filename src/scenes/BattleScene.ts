@@ -16,6 +16,11 @@ import {
   planAction,
   canPlayCard,
   unplayableReason,
+  cardNeedsTarget,
+  orderNeedsTarget,
+  orderCost,
+  targetProblem,
+  describeAbility,
   playRound,
   describeEffect,
   isBattleOver,
@@ -27,6 +32,8 @@ import {
   type Fighter,
   type TurnRecord,
   type Monster,
+  type MonsterOrder,
+  type Target,
 } from "../model/engine.ts";
 import { EFFECT_KIND, MODIFIER_MODE, STATUS, type StatusId } from "../model/effects.ts";
 import { RESIST_STAT } from "../model/damageTypes.ts";
@@ -263,6 +270,11 @@ export class BattleScene extends Phaser.Scene {
   // "End turn" sends the whole turn.
   staged: Card[] = [];
   stagedUltimate = false;
+  stagedTargets: Record<number, Target> = {}; // attack card id -> who it's aimed at
+  orders: MonsterOrder[] = []; // this turn's orders for your monsters
+  // Picking a target: for an attack card being played, or a monster order.
+  targeting: { kind: "card"; card: Card } | { kind: "order"; uid: number; use: MonsterOrder["use"] } | null = null;
+  monsterMenuUid: number | null = null; // your monster whose command menu is open
   previewedCardId: number | null = null; // hand card shown big in the middle, waiting for a confirm click
   previewLayer!: Phaser.GameObjects.Container; // the center preview, above everything else
   pendingTurn: PendingTurn | null = null; // committed turn being resolved/replayed
@@ -364,12 +376,19 @@ export class BattleScene extends Phaser.Scene {
     this.previewedCardId = null;
     this.staged = [];
     this.stagedUltimate = false;
+    this.stagedTargets = {};
+    this.orders = [];
+    this.targeting = null;
+    this.monsterMenuUid = null;
   }
 
-  // Cancel the center preview: the card goes back to the hand.
+  // Cancel the center preview (the card goes back to the hand), a target
+  // pick, or a monster's command menu.
   dismissPreview(): void {
-    if (this.previewedCardId === null) return;
+    if (this.previewedCardId === null && !this.targeting && this.monsterMenuUid === null) return;
     this.previewedCardId = null;
+    this.targeting = null;
+    this.monsterMenuUid = null;
     this.render();
   }
 
@@ -385,14 +404,14 @@ export class BattleScene extends Phaser.Scene {
 
   // AP left after the cards picked so far.
   plannedAp(): number {
-    return checkPlan(this.battle.player, this.staged).ap;
+    return checkPlan(this.battle.player, this.staged, false, this.orders).ap;
   }
 
   statusMessage(): string {
     if (this.battle.winner) return `${fighterName(this.battle.winner)} wins! Press "Restart" to play again.`;
     if (this.battle.draw) return `Draw! Press "Restart" to play again.`;
     if (this.handHint) return `Round ${this.battle.round} — ${this.handHint}`;
-    return `Round ${this.battle.round} — ${this.plannedAp()}/${this.battle.player.maxAp} AP left. Play cards, then End turn. The CPU is choosing at the same time.`;
+    return `Round ${this.battle.round} — ${this.plannedAp()}/${this.battle.player.maxAp} AP left. Play cards or click your monsters to give orders, then End turn.`;
   }
 
   // --- scene ---------------------------------------------------------------
@@ -576,44 +595,114 @@ export class BattleScene extends Phaser.Scene {
     const card = this.battle.player.hand.find((c) => c.id === this.previewedCardId);
     this.previewedCardId = null;
     if (!card || !this.canAct()) return this.render();
-    const reason = unplayableReason(this.battle.player, card, this.staged);
+    const reason = unplayableReason(this.battle.player, card, this.staged, this.orders);
     if (reason) {
       this.handHint = `can't play ${card.name}: ${reason}.`;
       return this.render();
     }
+    // A single-target attack: pick who it hits first (automatic when the
+    // only possible target is the enemy fighter).
+    if (cardNeedsTarget(card)) return this.startTargeting({ kind: "card", card });
+    this.stageCard(card, null);
+  }
+
+  stageCard(card: Card, target: Target | null): void {
     this.staged = [...this.staged, card];
+    if (target) this.stagedTargets = { ...this.stagedTargets, [card.id]: target };
     playSfx("card");
     this.render();
+  }
+
+  // Enter target picking, or skip it when the enemy has no monsters.
+  startTargeting(targeting: NonNullable<BattleScene["targeting"]>): void {
+    this.monsterMenuUid = null;
+    if (this.battle.cpu.field.length === 0) return this.chooseTarget({ kind: "fighter" }, targeting);
+    this.targeting = targeting;
+    this.handHint = null;
+    this.render();
+  }
+
+  chooseTarget(target: Target, targeting = this.targeting): void {
+    this.targeting = null;
+    if (!targeting) return this.render();
+    if (targeting.kind === "card") return this.stageCard(targeting.card, target);
+    this.orders = [...this.orders.filter((o) => o.uid !== targeting.uid), { uid: targeting.uid, use: targeting.use, target }];
+    playSfx("card");
+    this.render();
+  }
+
+  // Keep only the picks that are still payable, in order (after a card or
+  // order was taken back).
+  prunePlan(): void {
+    const player = this.battle.player;
+    const kept: Card[] = [];
+    for (const card of this.staged) if (canPlayCard(player, card, kept)) kept.push(card);
+    this.staged = kept;
+    const keptIds = new Set(kept.map((c) => c.id));
+    this.stagedTargets = Object.fromEntries(Object.entries(this.stagedTargets).filter(([id]) => keptIds.has(Number(id))));
+    const orders: MonsterOrder[] = [];
+    for (const order of this.orders) if (!checkPlan(player, kept, false, [...orders, order]).problem) orders.push(order);
+    this.orders = orders;
+    if (this.stagedUltimate && checkPlan(player, kept, true, orders).problem) this.stagedUltimate = false;
   }
 
   // A picked card was clicked on the arena slot: take it back. Cards picked
   // after it stay only if the turn is still payable without it.
   unstage(cardId: number): void {
     if (!this.canAct()) return;
-    const rest = this.staged.filter((c) => c.id !== cardId);
-    const kept: Card[] = [];
-    for (const card of rest) if (canPlayCard(this.battle.player, card, kept)) kept.push(card);
-    this.staged = kept;
-    if (this.stagedUltimate && checkPlan(this.battle.player, kept, true).problem) this.stagedUltimate = false;
+    this.staged = this.staged.filter((c) => c.id !== cardId);
+    this.prunePlan();
     this.handHint = null;
+    this.render();
+  }
+
+  // One of your monsters was clicked: cancel its order if it has one,
+  // otherwise open its command menu.
+  onMonsterClick(monster: Monster): void {
+    if (!this.canAct()) return;
+    if (!monster.ready) {
+      this.handHint = `${monster.name} was just summoned -- it can act next round.`;
+      return this.render();
+    }
+    if (this.orders.some((o) => o.uid === monster.uid)) {
+      this.orders = this.orders.filter((o) => o.uid !== monster.uid);
+      this.prunePlan();
+      return this.render();
+    }
+    this.previewedCardId = null;
+    this.monsterMenuUid = monster.uid;
+    this.handHint = null;
+    this.render();
+  }
+
+  giveOrder(monster: Monster, use: MonsterOrder["use"]): void {
+    this.monsterMenuUid = null;
+    const problem = checkPlan(this.battle.player, this.staged, false, [...this.orders, { uid: monster.uid, use, target: null }]).problem;
+    if (problem) {
+      this.handHint = `${problem}.`;
+      return this.render();
+    }
+    if (orderNeedsTarget(monster, use)) return this.startTargeting({ kind: "order", uid: monster.uid, use });
+    this.orders = [...this.orders, { uid: monster.uid, use, target: null }];
+    playSfx("card");
     this.render();
   }
 
   // Ultimate is a toggle: it joins this turn when it's ended.
   onUltimateClick(): void {
     if (!this.canAct()) return;
-    if (!this.stagedUltimate && checkPlan(this.battle.player, this.staged, true).problem) return;
+    if (!this.stagedUltimate && checkPlan(this.battle.player, this.staged, true, this.orders).problem) return;
     this.stagedUltimate = !this.stagedUltimate;
     this.render();
   }
 
   onEndTurnClick(): void {
     if (!this.canAct()) return;
-    const action = planAction(
-      this.battle.player,
-      this.staged.map((c) => c.id),
-      this.stagedUltimate
-    );
+    const action = planAction(this.battle.player, this.staged.map((c) => c.id), this.stagedUltimate, {
+      targets: this.stagedTargets,
+      orders: this.orders,
+      opponent: this.battle.cpu,
+    });
     if (!action) {
       this.handHint = "that turn can't be paid for any more -- take a card back.";
       this.render();
@@ -832,13 +921,17 @@ export class BattleScene extends Phaser.Scene {
     this.renderHand(locked);
     this.renderLog();
     this.drawPreview(locked);
+    if (!locked) {
+      this.drawTargeting();
+      this.drawMonsterMenu();
+    }
 
     this.statusText.setText(this.statusMessage());
-    const ultimateReady = !checkPlan(this.battle.player, this.staged, true).problem;
+    const ultimateReady = !checkPlan(this.battle.player, this.staged, true, this.orders).problem;
     this.ultimateButton.setEnabled(!locked && (this.stagedUltimate || ultimateReady));
     (this.ultimateButton.container.getAt(1) as Phaser.GameObjects.Text).setText(this.stagedUltimate ? "Ultimate ✓ (undo)" : "Use Ultimate");
     this.endTurnButton.setEnabled(!locked);
-    const plays = this.staged.length + (this.stagedUltimate ? 1 : 0);
+    const plays = this.staged.length + (this.stagedUltimate ? 1 : 0) + this.orders.length;
     (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn (${plays})` : "End turn (pass)");
 
     if (isBattleOver(this.battle) && !this.recapPlaying) this.showResult();
@@ -1244,7 +1337,7 @@ export class BattleScene extends Phaser.Scene {
     } else {
       // Can't be paid for after what's already picked: dimmed, but it can
       // still be opened to read (the preview says why it can't be played).
-      if (unplayableReason(this.battle.player, card, this.staged)) cardContainer.setAlpha(0.55);
+      if (unplayableReason(this.battle.player, card, this.staged, this.orders)) cardContainer.setAlpha(0.55);
       // Hover expands the card, growing up from its bottom edge.
       bg.on("pointerover", (pointer: Phaser.Input.Pointer) => {
         if (pointer.wasTouch) return;
@@ -1290,11 +1383,12 @@ export class BattleScene extends Phaser.Scene {
     bg.on("pointerdown", () => this.confirmPreview());
     this.previewLayer.add(container);
 
-    const reason = unplayableReason(this.battle.player, card, this.staged);
-    const after = checkPlan(this.battle.player, [...this.staged, card]).ap;
+    const reason = unplayableReason(this.battle.player, card, this.staged, this.orders);
+    const after = checkPlan(this.battle.player, [...this.staged, card], false, this.orders).ap;
+    const aim = cardNeedsTarget(card) && this.battle.cpu.field.length > 0 ? " -- then pick its target" : "";
     const hint = reason
       ? `Can't play this now: ${reason}.\nClick anywhere to put it back.`
-      : `Click the card to play it (AP ${this.plannedAp()} → ${after}).\nClick anywhere else to put it back.`;
+      : `Click the card to play it (AP ${this.plannedAp()} → ${after})${aim}.\nClick anywhere else to put it back.`;
     this.previewLayer.add(
       textShadow(
         this.add
@@ -1312,6 +1406,126 @@ export class BattleScene extends Phaser.Scene {
     // Pop in from slightly smaller, centered.
     container.setAlpha(0).setScale(0.85).setPosition(x + (w * 0.15) / 2, y + (h * 0.15) / 2);
     this.tweens.add({ targets: container, alpha: 1, scale: 1, x, y, duration: 140, ease: "Back.easeOut" });
+  }
+
+  // Picking a target: the board dims, and every legal target on the enemy
+  // side (their fighter -- strip or portrait -- and their monsters) lights up
+  // to be clicked. A guard monster has to be picked first. Clicking anywhere
+  // else cancels.
+  drawTargeting(): void {
+    const targeting = this.targeting;
+    if (!targeting) return;
+    const opponent = this.battle.cpu;
+    const dim = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x05070d, 0.55).setOrigin(0, 0).setInteractive();
+    dim.on("pointerdown", () => this.dismissPreview());
+    this.previewLayer.add(dim);
+
+    const box = (x: number, y: number, w: number, h: number, target: Target): void => {
+      const legal = !targetProblem(opponent, target);
+      const g = this.add.graphics();
+      if (legal) {
+        g.fillStyle(0xff5a4f, 0.16);
+        g.fillRoundedRect(x, y, w, h, 10);
+        g.lineStyle(3, 0xff5a4f, 1);
+        g.strokeRoundedRect(x, y, w, h, 10);
+        g.setInteractive(new Phaser.Geom.Rectangle(x, y, w, h), Phaser.Geom.Rectangle.Contains);
+        g.on("pointerdown", () => this.chooseTarget(target));
+        this.tweens.add({ targets: g, alpha: 0.55, duration: 500, yoyo: true, repeat: -1 });
+        g.once("destroy", () => this.tweens.killTweensOf(g));
+      } else {
+        g.fillStyle(0x05070d, 0.45);
+        g.fillRoundedRect(x, y, w, h, 10);
+      }
+      this.previewLayer.add(g);
+    };
+    box(STRIP_X, CPU_STRIP_Y, STRIP_W, STRIP_H, { kind: "fighter" });
+    box(PORTRAIT_X, CPU_PORTRAIT_Y, PORTRAIT_W, PORTRAIT_H, { kind: "fighter" });
+    opponent.field.forEach((monster, i) => {
+      const pos = this.monsterPos("cpu", i);
+      box(pos.x - 3, pos.y - 3, MONSTER_W + 6, MONSTER_H + 6, { kind: "monster", uid: monster.uid });
+    });
+
+    let what: string;
+    if (targeting.kind === "card") {
+      what = targeting.card.name;
+    } else {
+      const monster = this.battle.player.field.find((m) => m.uid === targeting.uid);
+      what = `${monster?.name ?? "your monster"}'s ${targeting.use === "attack" ? "attack" : (monster?.ability?.name ?? "ability")}`;
+    }
+    const guard = opponent.field.some((m) => m.guard) ? "\nA guard monster is in the way: it has to be hit first." : "";
+    this.previewLayer.add(
+      textShadow(
+        this.add
+          .text(GAME_WIDTH / 2, 470, `Choose a target for ${what}.${guard}\nClick anywhere else to cancel.`, {
+            fontFamily: FONT_FAMILY,
+            fontSize: "16px",
+            fontStyle: "800",
+            color: TEXT.white,
+            align: "center",
+          })
+          .setOrigin(0.5, 0)
+      )
+    );
+  }
+
+  // Your monster's command menu: attack, its ability, or cancel -- each
+  // with its AP cost, greyed out when this turn can't pay for it.
+  drawMonsterMenu(): void {
+    const player = this.battle.player;
+    const index = player.field.findIndex((m) => m.uid === this.monsterMenuUid);
+    const monster = player.field[index];
+    if (!monster) return;
+    const dim = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x05070d, 0.45).setOrigin(0, 0).setInteractive();
+    dim.on("pointerdown", () => this.dismissPreview());
+    this.previewLayer.add(dim);
+
+    const w = 236;
+    const ability = monster.ability;
+    const h = ability ? 214 : 150;
+    const pos = this.monsterPos("player", index);
+    const x = Math.max(STRIP_X, pos.x + MONSTER_W / 2 - w / 2 - 120);
+    const y = FIELD_Y - 10;
+    const panel = this.add.graphics();
+    panel.fillStyle(COLORS.panel, 0.98);
+    panel.fillRoundedRect(x, y, w, h, 12);
+    panel.lineStyle(2, PREVIEW_RING, 1);
+    panel.strokeRoundedRect(x, y, w, h, 12);
+    panel.setInteractive(new Phaser.Geom.Rectangle(x, y, w, h), Phaser.Geom.Rectangle.Contains); // clicks on the panel don't cancel
+    this.previewLayer.add(panel);
+    this.previewLayer.add(
+      this.add.text(x + 14, y + 10, monster.name, { fontFamily: FONT_FAMILY, fontSize: "15px", fontStyle: "800", color: TEXT.white })
+    );
+    this.previewLayer.add(
+      this.add.text(x + 14, y + 31, `${Math.ceil(monster.hp)}/${monster.maxHp} HP · ATK ${monster.atk} · SPD ${monster.speed}`, {
+        fontFamily: FONT_FAMILY,
+        fontSize: "11px",
+        color: TEXT.muted,
+      })
+    );
+
+    const affordable = (use: MonsterOrder["use"]): boolean =>
+      !checkPlan(player, this.staged, false, [...this.orders, { uid: monster.uid, use, target: null }]).problem;
+    let by = y + 52;
+    const option = (label: string, enabled: boolean, onClick: () => void, color: number, hover: number): void => {
+      const button = createButton(this, x + 14, by, w - 28, 34, label, { color, hoverColor: hover, onClick });
+      button.setEnabled(enabled);
+      this.previewLayer.add(button.container);
+      by += 42;
+    };
+    option(`Attack (${monster.atk} dmg) — ${orderCost(monster, "attack")} AP`, affordable("attack"), () => this.giveOrder(monster, "attack"), 0xb5423a, 0xcc5a50);
+    if (ability) {
+      option(`${ability.name} — ${ability.cost} AP`, affordable("ability"), () => this.giveOrder(monster, "ability"), 0x6a4a94, 0x8060aa);
+      this.previewLayer.add(
+        this.add.text(x + 14, by - 6, describeAbility(ability) + (ability.target === "self" ? " (on you)" : ""), {
+          fontFamily: FONT_FAMILY,
+          fontSize: "11px",
+          color: TEXT.muted,
+          wordWrap: { width: w - 28 },
+        })
+      );
+      by += 22;
+    }
+    option("Cancel", true, () => this.dismissPreview(), COLORS.restart, COLORS.restartHover);
   }
 
   // Face-down card for the opponent's slot while a sent turn resolves.
@@ -1388,6 +1602,21 @@ export class BattleScene extends Phaser.Scene {
           bg.disableInteractive();
         }
         this.slotsContainer.add(container);
+        const target = cardId !== null && !pending ? this.stagedTargets[cardId] : undefined;
+        if (target) {
+          this.slotsContainer.add(
+            this.add
+              .text(x0 + i * step + w / 2, SLOT_Y + (SLOT_H - h) / 2 + 8 + h + 3, `→ ${this.targetName(target)}`, {
+                fontFamily: FONT_FAMILY,
+                fontSize: "9px",
+                fontStyle: "800",
+                color: "#ffd23f",
+                stroke: "#000000",
+                strokeThickness: 2,
+              })
+              .setOrigin(0.5, 0)
+          );
+        }
       });
       this.slotsContainer.add(
         this.add
@@ -1432,15 +1661,30 @@ export class BattleScene extends Phaser.Scene {
         );
       }
       field.forEach((monster, i) => {
-        this.drawMonster(monster, x + i * (MONSTER_W + MONSTER_GAP), FIELD_Y + 26, monster.summonedRound >= this.battle.round);
+        const pos = this.monsterPos(fighter === this.battle.player ? "player" : "cpu", i);
+        this.drawMonster(monster, pos.x, pos.y, !monster.ready, fighter === this.battle.player);
       });
     }
   }
 
+  // Top-left of the i-th monster token on a side's field.
+  monsterPos(key: "player" | "cpu", index: number): { x: number; y: number } {
+    const x = key === "cpu" ? CPU_FIELD_X : PLAYER_FIELD_X;
+    return { x: x + index * (MONSTER_W + MONSTER_GAP), y: FIELD_Y + 26 };
+  }
+
+  targetName(target: Target): string {
+    if (target.kind === "fighter") return this.opponentLabel;
+    return this.battle.cpu.field.find((m) => m.uid === target.uid)?.name ?? "monster";
+  }
+
   // One monster token: art, name, HP bar, ATK/SPD, and a blue frame for a
-  // guard. `fresh`: summoned this round, so it only starts attacking next one.
-  drawMonster(monster: Monster, x: number, y: number, fresh: boolean): void {
+  // guard. `fresh`: summoned this round, so it can only act from the next
+  // one. Your own ready monsters are clickable (command menu); one with an
+  // order this turn gets a gold frame and says what it'll do.
+  drawMonster(monster: Monster, x: number, y: number, fresh: boolean, own: boolean): void {
     const c = this.add.container(x, y);
+    const order = own && !this.pendingTurn ? this.orders.find((o) => o.uid === monster.uid) : undefined;
     const g = this.add.graphics();
     g.fillStyle(COLORS.card.monster, 1);
     g.fillRoundedRect(0, 0, MONSTER_W, MONSTER_H, 8);
@@ -1448,7 +1692,33 @@ export class BattleScene extends Phaser.Scene {
       g.lineStyle(3, MONSTER_GUARD, 1);
       g.strokeRoundedRect(1.5, 1.5, MONSTER_W - 3, MONSTER_H - 3, 8);
     }
+    if (order || this.monsterMenuUid === monster.uid) {
+      g.lineStyle(3, PREVIEW_RING, 1);
+      g.strokeRoundedRect(-2, -2, MONSTER_W + 4, MONSTER_H + 4, 10);
+    }
+    if (own && this.canAct() && !this.pendingTurn) {
+      g.setInteractive(new Phaser.Geom.Rectangle(0, 0, MONSTER_W, MONSTER_H), Phaser.Geom.Rectangle.Contains);
+      g.on("pointerdown", () => this.onMonsterClick(monster));
+    }
     c.add(g);
+    if (order) {
+      // One short line under the token: "ATK → Skeleton", "Fortify".
+      const what = order.use === "attack" ? "ATK" : (monster.ability?.name ?? "Ability");
+      const name = order.target ? this.targetName(order.target) : "";
+      const aim = order.target ? ` → ${name.length > 9 ? `${name.slice(0, 8)}…` : name}` : "";
+      c.add(
+        this.add
+          .text(MONSTER_W / 2, MONSTER_H + 2, `${what}${aim}`, {
+            fontFamily: FONT_FAMILY,
+            fontSize: "9px",
+            fontStyle: "800",
+            color: "#ffd23f",
+            stroke: "#000000",
+            strokeThickness: 3,
+          })
+          .setOrigin(0.5, 0)
+      );
+    }
 
     const artW = MONSTER_W - 8;
     const artH = Math.round(artW * 0.75);

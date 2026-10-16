@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactElement } from "react";
 import { allCards, deckEntriesForCard, getCatalog, type CatalogCardEntry } from "../model/catalog.ts";
 import { CARD_CATEGORY, cardCost } from "../model/cardTypes.ts";
-import { describeCard } from "../model/engine.ts";
+import { describeCard, describeMonsterOrders } from "../model/engine.ts";
 import type { Card } from "../model/cardTypes.ts";
 
 const CATEGORY_ORDER = [CARD_CATEGORY.ATTACK, CARD_CATEGORY.DEFEND, CARD_CATEGORY.BUFF, CARD_CATEGORY.DEBUFF, CARD_CATEGORY.MONSTER];
@@ -93,6 +93,7 @@ function GalleryCard({ card }: { card: CatalogCardEntry }): ReactElement {
   const entries = deckEntriesForCard(card.id);
   // Describe via a battle instance shape (props spread flat like createCardInstance).
   const description = describeCard({ ...card.props, category: card.category, name: card.name } as Card);
+  const orders = describeMonsterOrders({ ...card.props, category: card.category } as Card);
   return (
     <div className="gallery-card">
       {card.imageUrl ? (
@@ -104,6 +105,7 @@ function GalleryCard({ card }: { card: CatalogCardEntry }): ReactElement {
       <div className="gallery-desc">
         {cardCost(card.props)} AP · {description}
       </div>
+      {orders ? <div className="gallery-desc">{orders}</div> : null}
       <div className="gallery-decks">
         {entries.length > 0
           ? entries.map((e) => `${e.classDef.name} ×${e.copies}`).join(" · ")

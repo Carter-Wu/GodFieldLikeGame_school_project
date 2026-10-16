@@ -23,7 +23,8 @@
 //      order they were picked in. A fighter knocked out mid-phase gets none
 //      of their remaining strikes, and a landed "interrupts" card cancels the
 //      opponent's next attack card
-//   4. monsters on the field attack, fastest first
+//   4. monsters their owner gave an order (paid for with AP in step 2)
+//      attack or use their ability, fastest first, at the chosen targets
 //   5. statuses: burning / poison deal their damage, every status ticks down
 //   6. AP refills (with one more max AP), ultimate meter regens, and both
 //      sides draw back up to a full hand
@@ -57,6 +58,7 @@ import {
   type AttackCard,
   type Card,
   type DefendCard,
+  type MonsterAbility,
   type MonsterCard,
 } from "./cardTypes.ts";
 import { ELEMENT, RESIST_STAT, type DamageType, type Element } from "./damageTypes.ts";
@@ -120,7 +122,24 @@ export interface Monster {
   element: Element | null;
   applies: ApplyStatusEffect[];
   guard: boolean;
-  summonedRound: number; // acts from the round after this one
+  summonedRound: number;
+  attackCost: number; // AP to order an attack
+  ability: MonsterAbility | null;
+  ready: boolean; // false the round it's summoned: it can take orders from the next one
+}
+
+// Who an attack is aimed at, on the opponent's side: their fighter, or one
+// of their monsters (by uid). A guard monster has to be targeted first; if
+// the target is gone by the time the attack lands, it goes to a guard if
+// there is one, else the fighter.
+export type Target = { kind: "fighter" } | { kind: "monster"; uid: number };
+
+// An order for one of your own (ready) monsters this turn: attack, or use
+// its ability. `target` is needed when it hits something (see needsTarget).
+export interface MonsterOrder {
+  uid: number;
+  use: "attack" | "ability";
+  target: Target | null;
 }
 
 export interface GuardInfo {
@@ -135,7 +154,9 @@ export interface GuardInfo {
 export interface MonsterHit {
   order: number;
   attacker: string;
-  target: string; // a monster's name, or "fighter"
+  ability: string | null; // the ability's name, null for a plain attack
+  target: string; // a monster's name, "fighter", or "self" (an ability on its owner)
+  effects: string | null; // what a non-damage ability did, for the recap
   damage: number;
   guarded: number;
   resisted: number;
@@ -166,6 +187,7 @@ export interface PlayRecord {
   element: Element | null;
   cost: number | null;
   description: string | null;
+  target: string | null; // who an attack card was aimed at (a monster's name, or "fighter")
   damage: number | null;
   guarded: number; // absorbed by the target's defend card
   resisted: number; // absorbed by the target's DEF/MR/ER
@@ -306,13 +328,17 @@ export function canUseUltimate(fighter: Fighter): boolean {
 
 // --- planning a turn -----------------------------------------------------
 //
-// A turn is the cards a fighter picks, in order, plus whether they also
-// fire their ultimate. Playing them one after another has to stay payable
-// the whole way: AP, HP (never down to 0), ultimate meter, field slots.
+// A turn is the cards a fighter picks, in order (each attack card with the
+// target it's aimed at), whether they also fire their ultimate, and orders
+// for their monsters. Paying for all of it, cards first and then monster
+// orders, has to work the whole way: AP, HP (never down to 0), ultimate
+// meter, field slots.
 
 export interface Action {
   cards: Card[];
   ultimate: boolean;
+  targets?: Record<number, Target>; // attack card instance id -> its target
+  orders?: MonsterOrder[];
 }
 
 // Client wire action (what the browser sends the server -- card identities
@@ -320,6 +346,8 @@ export interface Action {
 export interface ClientAction {
   cardIds: number[];
   ultimate: boolean;
+  targets?: Record<string, Target>;
+  orders?: MonsterOrder[];
 }
 
 export interface PlanCheck {
@@ -332,7 +360,40 @@ function selfEffects(card: Card): Effect[] {
   return card.category === CARD_CATEGORY.BUFF || card.category === CARD_CATEGORY.DEBUFF ? (card.effects ?? []) : [];
 }
 
-export function checkPlan(fighter: Fighter, cards: Card[], ultimate = false): PlanCheck {
+// Attack cards aimed at a single target (not the "field" sweeps).
+export function cardNeedsTarget(card: Card): boolean {
+  return card.category === CARD_CATEGORY.ATTACK && card.target !== "field";
+}
+
+// Whether a monster order hits something, so needs a target.
+export function orderNeedsTarget(monster: Monster, use: MonsterOrder["use"]): boolean {
+  if (use === "attack") return true;
+  return monster.ability?.target === "enemy" && (monster.ability.damage ?? 0) > 0;
+}
+
+export function orderCost(monster: Monster, use: MonsterOrder["use"]): number {
+  return use === "attack" ? monster.attackCost : (monster.ability?.cost ?? 0);
+}
+
+// null if `target` is a legal aim against `opponent` right now: a monster
+// that's on their field, and a guard if they have one.
+export function targetProblem(opponent: Fighter, target: Target): string | null {
+  const guard = opponent.field.some((m) => m.guard);
+  if (target.kind === "fighter") return guard ? "a guard monster is in the way -- target it first" : null;
+  const monster = opponent.field.find((m) => m.uid === target.uid);
+  if (!monster) return "that monster isn't on the field";
+  if (guard && !monster.guard) return "a guard monster is in the way -- target it first";
+  return null;
+}
+
+// Where an attack goes if the player doesn't pick (the CPU's fallback, old
+// clients): a guard if there is one, else the fighter.
+export function defaultTarget(opponent: Fighter): Target {
+  const guard = opponent.field.find((m) => m.guard);
+  return guard ? { kind: "monster", uid: guard.uid } : { kind: "fighter" };
+}
+
+export function checkPlan(fighter: Fighter, cards: Card[], ultimate = false, orders: MonsterOrder[] = []): PlanCheck {
   let ap = fighter.ap;
   let hp = fighter.hp;
   let meter = fighter.ultimateMeter;
@@ -356,29 +417,82 @@ export function checkPlan(fighter: Fighter, cards: Card[], ultimate = false): Pl
       if (effect.kind === EFFECT_KIND.SUMMON) field = Math.min(FIELD_SIZE, field + (effect.count ?? 1));
     }
   }
+  const ordered = new Set<number>();
+  for (const order of orders) {
+    const fail = (problem: string): PlanCheck => ({ problem, ap, meter });
+    const monster = fighter.field.find((m) => m.uid === order.uid);
+    if (!monster) return fail("that monster isn't on your field");
+    if (!monster.ready) return fail(`${monster.name} was just summoned -- it can act next round`);
+    if (ordered.has(order.uid)) return fail(`${monster.name} already has an order this round`);
+    if (order.use === "ability" && !monster.ability) return fail(`${monster.name} has no ability`);
+    ordered.add(order.uid);
+    const cost = orderCost(monster, order.use);
+    const what = order.use === "attack" ? "attack" : `use ${monster.ability?.name}`;
+    if (ap < cost) return fail(`${monster.name} needs ${cost} AP to ${what}`);
+    ap -= cost;
+  }
   if (ultimate && meter < fighter.classDef.ultimate.cost) return { problem: "your ultimate isn't charged", ap, meter };
   return { problem: null, ap, meter };
 }
 
-// null if `card` can be added after the already-picked `picked` cards,
-// otherwise why not (shown on the battle screen).
-export function unplayableReason(fighter: Fighter, card: Card, picked: Card[] = []): string | null {
-  return checkPlan(fighter, [...picked, card]).problem;
+// null if `card` can be added after the already-picked `picked` cards (and
+// this turn's monster orders), otherwise why not (shown on the battle screen).
+export function unplayableReason(fighter: Fighter, card: Card, picked: Card[] = [], orders: MonsterOrder[] = []): string | null {
+  return checkPlan(fighter, [...picked, card], false, orders).problem;
 }
 
-export function canPlayCard(fighter: Fighter, card: Card, picked: Card[] = []): boolean {
-  return unplayableReason(fighter, card, picked) === null;
+export function canPlayCard(fighter: Fighter, card: Card, picked: Card[] = [], orders: MonsterOrder[] = []): boolean {
+  return unplayableReason(fighter, card, picked, orders) === null;
 }
 
-// A turn from hand card ids, or null if it can't be played.
-export function planAction(fighter: Fighter, cardIds: number[], ultimate = false): Action | null {
+export interface PlanOptions {
+  targets?: Record<number, Target>;
+  orders?: MonsterOrder[];
+  // Needed to check the targets; without it they're taken as given.
+  opponent?: Fighter;
+}
+
+// A turn from hand card ids, or null if it can't be played. Missing targets
+// default to defaultTarget().
+export function planAction(fighter: Fighter, cardIds: number[], ultimate = false, options: PlanOptions = {}): Action | null {
+  const { opponent } = options;
   const cards: Card[] = [];
   for (const id of cardIds) {
     const card = fighter.hand.find((c) => c.id === id);
     if (!card) return null;
     cards.push(card);
   }
-  return checkPlan(fighter, cards, ultimate).problem === null ? { cards, ultimate } : null;
+  const orders: MonsterOrder[] = (options.orders ?? []).map((o) => ({
+    uid: Number(o.uid),
+    use: o.use === "ability" ? "ability" : "attack",
+    target: o.target ?? null,
+  }));
+  if (checkPlan(fighter, cards, ultimate, orders).problem !== null) return null;
+
+  const aim = (target: Target | null | undefined): Target | null => {
+    const chosen: Target = target ?? (opponent ? defaultTarget(opponent) : { kind: "fighter" });
+    if (chosen.kind !== "fighter" && chosen.kind !== "monster") return null;
+    const clean: Target = chosen.kind === "monster" ? { kind: "monster", uid: Number(chosen.uid) } : { kind: "fighter" };
+    return opponent && targetProblem(opponent, clean) ? null : clean;
+  };
+  const targets: Record<number, Target> = {};
+  for (const card of cards) {
+    if (!cardNeedsTarget(card)) continue;
+    const target = aim(options.targets?.[card.id]);
+    if (!target) return null;
+    targets[card.id] = target;
+  }
+  for (const order of orders) {
+    const monster = fighter.field.find((m) => m.uid === order.uid) as Monster;
+    if (!orderNeedsTarget(monster, order.use)) {
+      order.target = null;
+      continue;
+    }
+    const target = aim(order.target);
+    if (!target) return null;
+    order.target = target;
+  }
+  return { cards, ultimate, targets, orders };
 }
 
 // Shorthands: a turn of just one card, just the ultimate, or nothing.
@@ -395,7 +509,22 @@ export function passAction(): Action {
 }
 
 export function toClientAction(action: Action): ClientAction {
-  return { cardIds: action.cards.map((c) => c.id), ultimate: action.ultimate };
+  return {
+    cardIds: action.cards.map((c) => c.id),
+    ultimate: action.ultimate,
+    targets: Object.fromEntries(Object.entries(action.targets ?? {})),
+    orders: action.orders ?? [],
+  };
+}
+
+// The server's side of toClientAction: the turn a client sent, re-checked
+// against the server's own copy of both fighters.
+export function fromClientAction(fighter: Fighter, opponent: Fighter, action: ClientAction | null | undefined): Action | null {
+  if (!action || !Array.isArray(action.cardIds)) return null;
+  const targets: Record<number, Target> = {};
+  for (const [id, target] of Object.entries(action.targets ?? {})) targets[Number(id)] = target;
+  const orders = Array.isArray(action.orders) ? action.orders : [];
+  return planAction(fighter, action.cardIds.map(Number), Boolean(action.ultimate), { targets, orders, opponent });
 }
 
 // --- statuses, monsters, and hitting things ------------------------------
@@ -452,6 +581,9 @@ function summonMonster(owner: Fighter, card: Omit<MonsterCard, "id" | "category"
     applies: card.applies ?? [],
     guard: Boolean(card.guard),
     summonedRound: round,
+    attackCost: card.attackCost ?? 1,
+    ability: card.ability ?? null,
+    ready: false,
   };
   owner.field.push(monster);
   return monster;
@@ -467,6 +599,18 @@ function damageMonster(owner: Fighter, monster: Monster, amount: number): FieldH
 
 // The monster that has to take a hit aimed at `owner`: a guard first.
 const blockingMonster = (owner: Fighter): Monster | undefined => owner.field.find((m) => m.guard);
+
+// Where a hit aimed at `target` on `defender`'s side actually lands, at the
+// moment it lands: the chosen monster if it's still there (and no guard
+// stands in front of it), otherwise a guard, otherwise the fighter (null).
+function landingMonster(defender: Fighter, target: Target | null | undefined): Monster | null {
+  const guard = blockingMonster(defender);
+  if (target?.kind === "monster") {
+    const chosen = defender.field.find((m) => m.uid === target.uid);
+    if (chosen && (!guard || chosen.guard)) return chosen;
+  }
+  return guard ?? null;
+}
 
 // Returns { damage, guarded, resisted }: the damage dealt, and how much the
 // defender's active defend card and resistance stat each absorbed (shown in
@@ -510,6 +654,7 @@ function newPlay(card: Card | null): PlayRecord {
     element: card?.element ?? null,
     cost: card ? cardCost(card) : null,
     description: card ? describeCard(card) : null,
+    target: null,
     damage: null,
     guarded: 0,
     resisted: 0,
@@ -586,7 +731,7 @@ function applyEffects(
   }
 }
 
-function resolveAttackCard(attacker: Fighter, defender: Fighter, card: AttackCard, play: PlayRecord): HitResult {
+function resolveAttackCard(attacker: Fighter, defender: Fighter, card: AttackCard, play: PlayRecord, target: Target | null): HitResult {
   const stats = computeCurrentStats(attacker);
   const value = Math.max(0, blinded(attacker, card.value + (card.value > 0 ? stats.atk : 0)));
 
@@ -595,12 +740,14 @@ function resolveAttackCard(attacker: Fighter, defender: Fighter, card: AttackCar
     return { damage: 0, guarded: 0, resisted: 0 };
   }
 
-  const guard = blockingMonster(defender);
-  if (guard) {
-    play.fieldHits.push(damageMonster(defender, guard, value));
+  const monster = landingMonster(defender, target);
+  if (monster) {
+    play.target = monster.name;
+    play.fieldHits.push(damageMonster(defender, monster, value));
     return { damage: 0, guarded: 0, resisted: 0 };
   }
 
+  play.target = "fighter";
   const hit = strikeFighter(defender, applyElement(defender, value, card.element), card.damageType);
   if (card.lifesteal) play.healed += healFighter(attacker, Math.floor(hit.damage * card.lifesteal));
   for (const status of card.applies ?? []) {
@@ -686,6 +833,7 @@ function tickStatuses(fighter: Fighter, turn: TurnRecord): void {
 function regenAndDraw(fighter: Fighter): void {
   fighter.maxAp = Math.min(AP_RULES.max, fighter.maxAp + AP_RULES.growth);
   fighter.ap = fighter.maxAp;
+  for (const monster of fighter.field) monster.ready = true;
   fighter.ultimateMeter += currentUltimateRegen(fighter);
   drawUpTo(fighter);
 }
@@ -774,7 +922,36 @@ function chooseCpuAction(battle: Battle): Action {
     picked.push(card);
     if (card.category === CARD_CATEGORY.DEFEND) guardedTypes.add(card.damageType);
   }
-  return { cards: picked, ultimate: checkPlan(cpu, picked, true).problem === null };
+
+  // Then put leftover AP into its ready monsters: their ability now and
+  // then, otherwise a plain attack.
+  const orders: MonsterOrder[] = [];
+  for (const monster of cpu.field) {
+    if (!monster.ready) continue;
+    const tryOrder = (use: MonsterOrder["use"]): boolean => {
+      const order: MonsterOrder = { uid: monster.uid, use, target: null };
+      if (checkPlan(cpu, picked, false, [...orders, order]).problem) return false;
+      order.target = orderNeedsTarget(monster, use) ? cpuTarget(battle.player, use === "attack" ? monster.atk : (monster.ability?.damage ?? 0)) : null;
+      orders.push(order);
+      return true;
+    };
+    if (monster.ability && random() < 0.5 && tryOrder("ability")) continue;
+    tryOrder("attack");
+  }
+
+  const targets: Record<number, Target> = {};
+  for (const card of picked) if (cardNeedsTarget(card)) targets[card.id] = cpuTarget(battle.player, (card as AttackCard).value);
+  return { cards: picked, ultimate: checkPlan(cpu, picked, true, orders).problem === null, targets, orders };
+}
+
+// The CPU's aim: a guard if it has to; otherwise, sometimes, a monster this
+// hit would finish off; otherwise the fighter.
+function cpuTarget(opponent: Fighter, damage: number): Target {
+  const forced = defaultTarget(opponent);
+  if (forced.kind === "monster") return forced;
+  const killable = opponent.field.find((m) => m.hp <= damage);
+  if (killable && random() < 0.5) return { kind: "monster", uid: killable.uid };
+  return forced;
 }
 
 // --- resolving a round ------------------------------------------------------
@@ -823,7 +1000,14 @@ function applySetupPhase(side: Side, battle: Battle): void {
       // buffs/debuffs for this round are already in place.
     }
   }
-  if (side.cardPlays.length === 0 && !side.action.ultimate) addLog(battle, `${fighterName(actor)} passes.`);
+  // Monster orders are paid for now too (after the cards, as checkPlan
+  // counts them), even though the monsters act later.
+  const orders = side.action.orders ?? [];
+  for (const order of orders) {
+    const monster = actor.field.find((m) => m.uid === order.uid);
+    if (monster) actor.ap = Math.max(0, actor.ap - orderCost(monster, order.use));
+  }
+  if (side.cardPlays.length === 0 && !side.action.ultimate && orders.length === 0) addLog(battle, `${fighterName(actor)} passes.`);
 }
 
 interface Strike {
@@ -895,7 +1079,7 @@ function resolveDamagePhase(battle: Battle, sides: [Side, Side]): void {
       addLog(battle, `${fighterName(actor)} unleashes its ultimate for ${hit.damage} damage!`);
       return;
     }
-    const hit = resolveAttackCard(actor, opponent, card, play);
+    const hit = resolveAttackCard(actor, opponent, card, play, side.action.targets?.[card.id] ?? null);
     Object.assign(play, { damage: hit.damage, guarded: hit.guarded, resisted: hit.resisted });
     if (play.fieldHits.length > 0) {
       addLog(battle, `${fighterName(actor)}'s ${card.name} hits ${play.fieldHits.map((h) => `${h.target} (${h.damage})`).join(", ")}.`);
@@ -909,37 +1093,71 @@ function resolveDamagePhase(battle: Battle, sides: [Side, Side]): void {
   });
 }
 
-// Every monster that was already on the field when the round started
-// attacks once, fastest first (equal speed: dice). It goes for the enemy's
-// monsters -- a guard first -- and only hits the enemy fighter once their
-// field is empty.
+// Monsters given an order this turn act, fastest first (equal speed: dice).
+// An attack hits its target for the monster's ATK; an ability hits its
+// target for the ability's damage and/or applies its effects. A monster
+// knocked out before its turn comes does nothing (its AP is already spent).
 function resolveMonsterPhase(battle: Battle, sides: [Side, Side]): void {
-  const acting: Array<{ side: Side; monster: Monster; speed: number; roll: number }> = [];
+  const acting: Array<{ side: Side; monster: Monster; order: MonsterOrder; speed: number; roll: number }> = [];
   for (const side of sides) {
-    for (const monster of side.actor.field) {
-      if (monster.summonedRound >= battle.round) continue;
-      acting.push({ side, monster, speed: monster.speed - statusPotency(side.actor, STATUS.SLOWED), roll: rollDie() });
+    for (const order of side.action.orders ?? []) {
+      const monster = side.actor.field.find((m) => m.uid === order.uid);
+      if (!monster) continue;
+      acting.push({ side, monster, order, speed: monster.speed - statusPotency(side.actor, STATUS.SLOWED), roll: rollDie() });
     }
   }
   acting.sort((a, b) => b.speed - a.speed || b.roll - a.roll);
 
-  let order = 0;
-  for (const { side, monster } of acting) {
+  let count = 0;
+  for (const { side, monster, order } of acting) {
     const { actor, opponent, turn } = side;
-    if (monster.hp <= 0 || actor.hp <= 0 || opponent.hp <= 0) continue;
-    const atk = Math.max(0, blinded(actor, monster.atk));
-    const target = blockingMonster(opponent) ?? opponent.field[0];
-    order += 1;
-    if (target) {
-      const hit = damageMonster(opponent, target, atk);
-      turn.monsterHits.push({ order, attacker: monster.name, target: target.name, damage: hit.damage, guarded: 0, resisted: 0, killed: hit.killed, damageType: monster.damageType });
-      addLog(battle, `${monster.name} hits ${target.name} for ${hit.damage}${hit.killed ? " -- destroyed!" : "."}`);
+    if (actor.hp <= 0 || opponent.hp <= 0) continue;
+    if (!actor.field.includes(monster)) {
+      addLog(battle, `${monster.name} was destroyed before it could act.`);
       continue;
     }
-    const hit = strikeFighter(opponent, applyElement(opponent, atk, monster.element), monster.damageType, false);
-    for (const status of monster.applies) addStatus(opponent, status);
-    turn.monsterHits.push({ order, attacker: monster.name, target: "fighter", ...hit, killed: false, damageType: monster.damageType });
-    addLog(battle, `${monster.name} hits ${fighterName(opponent)} for ${hit.damage}.`);
+    count += 1;
+    const ability = order.use === "ability" ? monster.ability : null;
+    const record: MonsterHit = {
+      order: count,
+      attacker: monster.name,
+      ability: ability?.name ?? null,
+      target: "fighter",
+      effects: null,
+      damage: 0,
+      guarded: 0,
+      resisted: 0,
+      killed: false,
+      damageType: ability?.damageType ?? monster.damageType,
+    };
+
+    const amount = ability ? (ability.damage ?? 0) : monster.atk;
+    if (!ability || (ability.target === "enemy" && amount > 0)) {
+      const value = Math.max(0, blinded(actor, amount));
+      const element = ability ? (ability.element ?? null) : monster.element;
+      const applies = ability ? (ability.applies ?? []) : monster.applies;
+      const victim = landingMonster(opponent, order.target);
+      if (victim) {
+        const hit = damageMonster(opponent, victim, value);
+        Object.assign(record, { target: victim.name, damage: hit.damage, killed: hit.killed });
+        addLog(battle, `${monster.name}${ability ? `'s ${ability.name}` : ""} hits ${victim.name} for ${hit.damage}${hit.killed ? " -- destroyed!" : "."}`);
+      } else {
+        const hit = strikeFighter(opponent, applyElement(opponent, value, element), record.damageType, false);
+        for (const status of applies) addStatus(opponent, status);
+        Object.assign(record, hit);
+        addLog(battle, `${monster.name}${ability ? `'s ${ability.name}` : ""} hits ${fighterName(opponent)} for ${hit.damage}.`);
+      }
+    }
+
+    if (ability?.effects?.length) {
+      const target = ability.target === "self" ? actor : opponent;
+      const play = newPlay(null);
+      applyEffects(actor, target, ability.effects, ability.duration ?? 1, play, battle.round);
+      if (ability.target === "self" && amount <= 0) record.target = "self";
+      record.effects = ability.effects.map(describeEffect).join(", ");
+      if (amount <= 0) addLog(battle, `${monster.name} uses ${ability.name} (${record.effects}).`);
+    }
+    turn.monsterHits.push(record);
   }
 }
 
@@ -1072,6 +1290,25 @@ export function describeEffect(effect: Effect): string {
   }
 }
 
+// What a monster's ability does, e.g. "fire 4, Burn 2 2t" or "DEF +3".
+export function describeAbility(ability: MonsterAbility): string {
+  const parts: string[] = [];
+  if ((ability.damage ?? 0) > 0) parts.push(`${ability.element ?? ability.damageType ?? "physical"} ${ability.damage}`);
+  for (const status of ability.applies ?? []) parts.push(describeStatus(status));
+  parts.push(...(ability.effects ?? []).map(describeEffect));
+  return parts.join(", ");
+}
+
+// A monster card's orders with their AP costs, for the gallery / deck
+// builder: "Attack 1 AP · Fire Breath 2 AP: fire 4, Burn 2 2t". "" for
+// other cards.
+export function describeMonsterOrders(card: Card): string {
+  if (card.category !== CARD_CATEGORY.MONSTER) return "";
+  const attack = `Attack ${card.attackCost ?? 1} AP`;
+  const ability = card.ability ? ` · ${card.ability.name} ${card.ability.cost} AP: ${describeAbility(card.ability)}` : "";
+  return attack + ability;
+}
+
 // What a card does, short enough for the face of a hand card. The AP cost is
 // drawn separately (cost gem), so it isn't repeated here.
 export function describeCard(card: Card): string {
@@ -1100,10 +1337,13 @@ export function describeCard(card: Card): string {
     }
     case CARD_CATEGORY.MONSTER: {
       const mon = card as MonsterCard;
+      // Kept short for the card face: the ability's details are in the
+      // monster's command menu (and describeAbility).
       parts.push(`${mon.hp} HP · ${mon.atk} ATK · SPD ${mon.speed}`);
       if (mon.guard) parts.push("guard");
       if (mon.element) parts.push(mon.element);
       for (const status of mon.applies ?? []) parts.push(describeStatus(status));
+      if (mon.ability) parts.push(`+ ${mon.ability.name}`);
       break;
     }
     default:

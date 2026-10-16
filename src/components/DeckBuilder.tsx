@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactElement } from "react";
 import type { ClassDef } from "../model/classes.ts";
 import { cardCost, type Card } from "../model/cardTypes.ts";
-import { describeCard } from "../model/engine.ts";
+import { describeCard, describeMonsterOrders } from "../model/engine.ts";
 import {
   DECK_RULES,
   classCardPool,
@@ -204,6 +204,9 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
                   <div className="gallery-desc">
                     {cardCost(card.props)} AP · {description}
                   </div>
+                  {card.category === "monster" ? (
+                    <div className="gallery-desc">{describeMonsterOrders({ ...card.props, category: card.category } as Card)}</div>
+                  ) : null}
                 </div>
                 <div className="deck-stepper">
                   <button

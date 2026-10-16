@@ -97,12 +97,12 @@ export class OnlineBattleScene extends BattleScene {
   }
 
   override commitAction(action: Action): void {
-    const planned = { staged: this.staged, ultimate: this.stagedUltimate };
+    const planned = { staged: this.staged, ultimate: this.stagedUltimate, targets: this.stagedTargets, orders: this.orders };
     this.clearPlanning();
     this.pendingTurn = { cards: action.cards, ultimate: action.ultimate, round: this.battle.round };
     this.submitting = true;
     this.errorMessage = null;
-    const n = action.cards.length + (action.ultimate ? 1 : 0);
+    const n = action.cards.length + (action.ultimate ? 1 : 0) + (action.orders?.length ?? 0);
     this.pendingPick = n === 0 ? "a pass" : n === 1 ? "1 play" : `${n} plays`;
     this.render();
 
@@ -114,6 +114,8 @@ export class OnlineBattleScene extends BattleScene {
         this.pendingTurn = null;
         this.staged = planned.staged;
         this.stagedUltimate = planned.ultimate;
+        this.stagedTargets = planned.targets;
+        this.orders = planned.orders;
       })
       .finally(() => {
         this.submitting = false;

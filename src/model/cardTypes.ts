@@ -51,7 +51,8 @@ export interface CardCommon {
 //   lifesteal  - heal for this fraction of the damage actually dealt
 //   interrupts - if it strikes first and deals damage, the opponent's attack
 //                card this round is cancelled
-//   target     - "field" hits every enemy monster instead of the fighter
+//   target     - "field" hits every enemy monster instead of the fighter;
+//                otherwise the player picks the target when playing it
 export interface AttackCard extends CardCommon {
   category: "attack";
   damageType: DamageType;
@@ -83,12 +84,30 @@ export interface DebuffCard extends CardCommon {
   duration: number;
 }
 
+// A monster's special move, used instead of a plain attack (for its own AP
+// cost). "enemy" moves with `damage` hit a target you pick, like an attack;
+// their `effects` (and every "self" move's) work like a debuff / buff card
+// played by the monster's owner, lasting `duration` rounds.
+export interface MonsterAbility {
+  name: string;
+  cost: number;
+  target: "enemy" | "self";
+  damage?: number;
+  damageType?: DamageType;
+  element?: Element | null;
+  applies?: ApplyStatusEffect[];
+  effects?: Effect[];
+  duration?: number;
+}
+
 // Monster card: puts a monster on the player's field (docs: "Monster Card
-// (HP, Speed)"). Every round after the one it's summoned in, it attacks for
-// `atk` -- the enemy's monsters first (a `guard` monster before any other),
-// the enemy fighter once their field is empty, ignoring their DEF/MR/ER (a
-// defend card still blocks it). Faster monsters act first.
-//   guard - enemy attack cards have to hit this monster instead of you
+// (HP, Speed)"). From the round after it's summoned, its owner can order it
+// once per round -- an attack for `attackCost` AP (default 1), or its
+// `ability` for the ability's cost -- at a target they pick: an enemy
+// monster, or the enemy fighter (whose DEF/MR/ER it gets past; a defend card
+// still blocks it). Ordered monsters act after the attack cards, fastest
+// first.
+//   guard - enemy attacks (cards and monsters) have to target this monster
 export interface MonsterCard extends CardCommon {
   category: "monster";
   hp: number;
@@ -97,6 +116,8 @@ export interface MonsterCard extends CardCommon {
   damageType: DamageType;
   applies?: ApplyStatusEffect[];
   guard?: boolean;
+  attackCost?: number;
+  ability?: MonsterAbility | null;
 }
 
 export type Card = AttackCard | DefendCard | BuffCard | DebuffCard | MonsterCard;

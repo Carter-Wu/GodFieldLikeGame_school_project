@@ -221,7 +221,16 @@ const cards: CatalogRows["cards"] = [
     id: "stone_sentinel",
     name: "Stone Sentinel",
     category: MONSTER,
-    props: { cost: 4, hp: 12, atk: 2, speed: 1, damageType: PHYSICAL, guard: true },
+    props: {
+      cost: 4,
+      hp: 12,
+      atk: 2,
+      speed: 1,
+      damageType: PHYSICAL,
+      guard: true,
+      attackCost: 1,
+      ability: { name: "Fortify", cost: 1, target: "self", effects: [statModifier("def", FLAT, 3)], duration: 2 },
+    },
   },
 
   // Pyromancer
@@ -258,7 +267,25 @@ const cards: CatalogRows["cards"] = [
     id: "flame_imp",
     name: "Flame Imp",
     category: MONSTER,
-    props: { cost: 3, hp: 6, atk: 3, speed: 3, damageType: ELEMENTAL, element: ELEMENT.FIRE, applies: [applyStatus(STATUS.BURNING, 1, 2)] },
+    props: {
+      cost: 3,
+      hp: 6,
+      atk: 3,
+      speed: 3,
+      damageType: ELEMENTAL,
+      element: ELEMENT.FIRE,
+      applies: [applyStatus(STATUS.BURNING, 1, 2)],
+      attackCost: 1,
+      ability: {
+        name: "Fire Breath",
+        cost: 2,
+        target: "enemy",
+        damage: 4,
+        damageType: ELEMENTAL,
+        element: ELEMENT.FIRE,
+        applies: [applyStatus(STATUS.BURNING, 2, 2)],
+      },
+    },
   },
 
   // Black Mage -- trades HP and ultimate meter for AP and cards
@@ -326,7 +353,16 @@ const cards: CatalogRows["cards"] = [
     id: "clockwork_golem",
     name: "Clockwork Golem",
     category: MONSTER,
-    props: { cost: 5, uaCharge: 4, hp: 11, atk: 4, speed: 1, damageType: PHYSICAL },
+    props: {
+      cost: 5,
+      uaCharge: 4,
+      hp: 11,
+      atk: 4,
+      speed: 1,
+      damageType: PHYSICAL,
+      attackCost: 2,
+      ability: { name: "Overdrive", cost: 3, target: "enemy", damage: 7, damageType: PHYSICAL },
+    },
   },
 
   // Necromancer -- fills the field fast, wears the enemy down with debuffs
@@ -347,14 +383,44 @@ const cards: CatalogRows["cards"] = [
     props: { cost: 2, effects: [statModifier("def", FLAT, -2), applyStatus(STATUS.SLOWED, 1, 2)], duration: 2 },
   },
   { id: "soul_harvest", name: "Soul Harvest", category: DEBUFF, props: { cost: 2, uaCharge: 4, effects: [meterSiphon(6)], duration: 1 } },
-  { id: "raise_skeleton", name: "Raise Skeleton", category: MONSTER, props: { cost: 2, hp: 5, atk: 2, speed: 2, damageType: PHYSICAL } },
+  { id: "raise_skeleton", name: "Raise Skeleton", category: MONSTER, props: { cost: 2, hp: 5, atk: 2, speed: 2, damageType: PHYSICAL, attackCost: 1 } },
   {
     id: "shambling_zombie",
     name: "Shambling Zombie",
     category: MONSTER,
-    props: { cost: 3, hp: 9, atk: 2, speed: 0, damageType: PHYSICAL, applies: [applyStatus(STATUS.POISON, 1, 2)] },
+    props: {
+      cost: 3,
+      hp: 9,
+      atk: 2,
+      speed: 0,
+      damageType: PHYSICAL,
+      applies: [applyStatus(STATUS.POISON, 1, 2)],
+      attackCost: 1,
+      ability: {
+        name: "Infectious Bite",
+        cost: 2,
+        target: "enemy",
+        damage: 2,
+        damageType: PHYSICAL,
+        applies: [applyStatus(STATUS.POISON, 2, 3)],
+      },
+    },
   },
-  { id: "grave_guard", name: "Grave Guard", category: MONSTER, props: { cost: 3, hp: 8, atk: 1, speed: 1, damageType: PHYSICAL, guard: true } },
+  {
+    id: "grave_guard",
+    name: "Grave Guard",
+    category: MONSTER,
+    props: {
+      cost: 3,
+      hp: 8,
+      atk: 1,
+      speed: 1,
+      damageType: PHYSICAL,
+      guard: true,
+      attackCost: 1,
+      ability: { name: "Grave Ward", cost: 1, target: "self", effects: [heal(3)], duration: 1 },
+    },
+  },
 ];
 
 // The general cards, one copy each in every class's starter deck -- that's

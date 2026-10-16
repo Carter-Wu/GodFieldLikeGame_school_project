@@ -81,7 +81,8 @@ describe("battle engine", () => {
     expect(battle.player.lastTurn?.plays).toHaveLength(1);
     const play = battle.player.lastTurn!.plays[0]!;
     expect(play).toMatchObject({ kind: "card", cardId: card.cardId, name: card.name });
-    expect(play.damage === null).toBe(card.category !== "attack");
+    // An attack the CPU interrupted never lands, so it has no damage either.
+    expect(play.damage === null).toBe(card.category !== "attack" || play.cancelled !== null);
     expect(play.guard === null).toBe(card.category !== "defend");
     expect(battle.cpu.lastTurn!.round).toBe(1);
 

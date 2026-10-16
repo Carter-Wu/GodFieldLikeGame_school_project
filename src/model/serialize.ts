@@ -95,7 +95,8 @@ export function deserializeFighter(data: SerializedFighter, hand: Card[] = data.
     deck: data.deck ?? [],
     discard: data.discard ?? [],
     hand,
-    field: data.field ?? [],
+    // Monsters stored before orders existed: 1 AP attacks, no ability, ready.
+    field: (data.field ?? []).map((m) => ({ ...m, attackCost: m.attackCost ?? 1, ability: m.ability ?? null, ready: m.ready ?? true })),
     statuses: data.statuses ?? {},
     ultimateMeter: data.ultimateMeter,
     cardsPlayedByCategory: data.cardsPlayedByCategory,

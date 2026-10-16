@@ -9,15 +9,21 @@ import {
   cardAction,
   checkPlan,
   createBattle,
+  computeCurrentStats,
+  fromClientAction,
   passAction,
   planAction,
+  playRound,
   resolveRound,
   setRandomSource,
+  toClientAction,
   ultimateAction,
   type Action,
   type Battle,
   type Fighter,
+  type MonsterOrder,
   type PlayRecord,
+  type Target,
 } from "../src/model/engine.ts";
 import { deserializeBattle, serializeBattle } from "../src/model/serialize.ts";
 import { starterDeckList, validateDeckList } from "../src/model/decks.ts";
@@ -56,6 +62,21 @@ function play(fighter: Fighter, ...cardIds: string[]): Action {
     cardIds.map((id) => give(fighter, id).id)
   );
   if (!action) throw new Error(`can't play ${cardIds.join(", ")}`);
+  return action;
+}
+
+// A player turn of just these monster orders (targets checked against the CPU).
+function orders(b: Battle, list: MonsterOrder[]): Action {
+  const action = planAction(b.player, [], false, { orders: list, opponent: b.cpu });
+  if (!action) throw new Error("can't give those orders");
+  return action;
+}
+
+// A player turn of one attack card aimed at `target`.
+function aimed(b: Battle, cardId: string, target: Target): Action {
+  const card = give(b.player, cardId);
+  const action = planAction(b.player, [card.id], false, { targets: { [card.id]: target }, opponent: b.cpu });
+  if (!action) throw new Error(`can't aim ${cardId} there`);
   return action;
 }
 
@@ -238,23 +259,90 @@ describe("elements and statuses", () => {
 });
 
 describe("monsters", () => {
-  it("are summoned, wait a round, then attack the enemy fighter", () => {
+  it("only act when ordered, and an attack order costs AP", () => {
     const b = freshBattle("necromancer", "pyromancer");
     resolveRound(b, play(b.player, "raise_skeleton"), NOTHING);
     expect(b.player.field.map((m) => m.name)).toEqual(["Raise Skeleton"]);
     const hp = b.cpu.hp;
-    resolveRound(b, NOTHING, NOTHING); // skeleton: 2 physical, ignores DEF
+    resolveRound(b, NOTHING, NOTHING); // no order: the skeleton just stands there
+    expect(b.cpu.hp).toBe(hp);
+
+    const skeleton = b.player.field[0]!;
+    const action = orders(b, [{ uid: skeleton.uid, use: "attack", target: { kind: "fighter" } }]);
+    expect(checkPlan(b.player, [], false, action.orders).ap).toBe(AP_RULES.max - 1);
+    resolveRound(b, action, NOTHING); // 2 physical, gets past DEF
     expect(hp - b.cpu.hp).toBe(2);
     expect(b.player.lastTurn?.monsterHits).toHaveLength(1);
   });
 
-  it("fight the enemy's monsters before the enemy fighter", () => {
+  it("can't take orders the round they're summoned", () => {
+    const b = freshBattle("necromancer");
+    resolveRound(b, play(b.player, "raise_skeleton"), NOTHING);
+    b.player.field[0]!.ready = false;
+    expect(planAction(b.player, [], false, { orders: [{ uid: b.player.field[0]!.uid, use: "attack", target: null }] })).toBeNull();
+  });
+
+  it("attack the monster you aim them at", () => {
     const b = freshBattle("necromancer", "pyromancer");
     resolveRound(b, play(b.player, "raise_skeleton"), play(b.cpu, "flame_imp"));
     const hp = b.cpu.hp;
-    resolveRound(b, NOTHING, NOTHING);
+    const imp = b.cpu.field[0]!;
+    resolveRound(b, orders(b, [{ uid: b.player.field[0]!.uid, use: "attack", target: { kind: "monster", uid: imp.uid } }]), NOTHING);
     expect(b.cpu.hp).toBe(hp);
-    expect(b.cpu.field[0]?.hp).toBe(6 - 2);
+    expect(imp.hp).toBe(6 - 2);
+  });
+
+  it("use their ability for its AP cost", () => {
+    const b = freshBattle("pyromancer", "guardian");
+    resolveRound(b, play(b.player, "flame_imp"), NOTHING);
+    const imp = b.player.field[0]!;
+    const action = orders(b, [{ uid: imp.uid, use: "ability", target: { kind: "fighter" } }]);
+    expect(checkPlan(b.player, [], false, action.orders).ap).toBe(AP_RULES.max - 2);
+    const hp = b.cpu.hp;
+    resolveRound(b, action, NOTHING); // Fire Breath: 4 fire, then Burn 2 at the end of the round
+    expect(hp - b.cpu.hp).toBe(4 + 2);
+    expect(b.player.lastTurn?.monsterHits[0]?.ability).toBe("Fire Breath");
+  });
+
+  it("can use a self ability without a target", () => {
+    const b = freshBattle("guardian");
+    resolveRound(b, play(b.player, "stone_sentinel"), NOTHING);
+    const def = computeCurrentStats(b.player).def;
+    resolveRound(b, orders(b, [{ uid: b.player.field[0]!.uid, use: "ability", target: null }]), NOTHING); // Fortify: DEF +3
+    expect(computeCurrentStats(b.player).def).toBe(def + 3);
+    expect(b.player.lastTurn?.monsterHits[0]?.target).toBe("self");
+  });
+
+  it("the CPU orders its ready monsters", () => {
+    const b = freshBattle("guardian", "necromancer");
+    resolveRound(b, NOTHING, play(b.cpu, "raise_skeleton"));
+    setRandomSource(() => 0.9);
+    playRound(b, NOTHING);
+    expect(b.cpu.lastTurn?.monsterHits).toHaveLength(1);
+  });
+});
+
+describe("targets", () => {
+  it("an attack card aimed at a monster hits it instead of the fighter", () => {
+    const b = freshBattle("guardian", "necromancer");
+    resolveRound(b, NOTHING, play(b.cpu, "shambling_zombie"));
+    const zombie = b.cpu.field[0]!;
+    const hp = b.cpu.hp;
+    resolveRound(b, aimed(b, "heavy_slam", { kind: "monster", uid: zombie.uid }), NOTHING);
+    expect(b.cpu.hp).toBe(hp);
+    expect(zombie.hp).toBe(9 - 9);
+    expect(b.cpu.field).toHaveLength(0);
+    expect(plays(b.player)[0]?.target).toBe("Shambling Zombie");
+  });
+
+  it("a guard has to be targeted first", () => {
+    const b = freshBattle("pyromancer", "guardian");
+    resolveRound(b, NOTHING, play(b.cpu, "stone_sentinel"));
+    const card = give(b.player, "fire_lance");
+    const opponent = b.cpu;
+    expect(planAction(b.player, [card.id], false, { targets: { [card.id]: { kind: "fighter" } }, opponent })).toBeNull();
+    const sentinel = b.cpu.field[0]!;
+    expect(planAction(b.player, [card.id], false, { targets: { [card.id]: { kind: "monster", uid: sentinel.uid } }, opponent })).not.toBeNull();
   });
 
   it("a guard monster takes attack cards aimed at its owner", () => {
@@ -266,6 +354,40 @@ describe("monsters", () => {
     expect(b.player.field[0]?.hp).toBe(12 - 8);
   });
 
+  it("falls back to the fighter when the aimed-at monster is already gone", () => {
+    const b = freshBattle("pyromancer", "necromancer");
+    resolveRound(b, NOTHING, play(b.cpu, "raise_skeleton"));
+    const skeleton = b.cpu.field[0]!;
+    const inferno = give(b.player, "inferno");
+    const dart = give(b.player, "ember_dart");
+    const action = planAction(b.player, [inferno.id, dart.id], false, {
+      targets: { [dart.id]: { kind: "monster", uid: skeleton.uid } },
+      opponent: b.cpu,
+    })!;
+    const hp = b.cpu.hp;
+    resolveRound(b, action, NOTHING); // Inferno kills the skeleton first; the dart then hits the fighter
+    expect(b.cpu.field).toHaveLength(0);
+    expect(b.cpu.hp).toBeLessThan(hp);
+    expect(plays(b.player)[1]?.target).toBe("fighter");
+  });
+
+  it("survive the trip to the server", () => {
+    const b = freshBattle("necromancer", "pyromancer");
+    resolveRound(b, play(b.player, "raise_skeleton"), play(b.cpu, "flame_imp"));
+    const card = give(b.player, "bone_spear");
+    const imp = b.cpu.field[0]!;
+    const action = planAction(b.player, [card.id], false, {
+      targets: { [card.id]: { kind: "monster", uid: imp.uid } },
+      orders: [{ uid: b.player.field[0]!.uid, use: "attack", target: { kind: "fighter" } }],
+      opponent: b.cpu,
+    })!;
+    const wire = JSON.parse(JSON.stringify(toClientAction(action)));
+    expect(fromClientAction(b.player, b.cpu, wire)).toEqual(action);
+    expect(fromClientAction(b.player, b.cpu, { ...wire, orders: [{ uid: 99, use: "attack", target: null }] })).toBeNull();
+  });
+});
+
+describe("monster cards", () => {
   it("field attacks hit every enemy monster", () => {
     const b = freshBattle("pyromancer", "necromancer");
     resolveRound(b, NOTHING, play(b.cpu, "raise_skeleton", "grave_guard"));

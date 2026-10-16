@@ -396,11 +396,20 @@ async function playMonsterHits(run: RoundRecapRun): Promise<void> {
     .flatMap((key) => (recap.sides[key].turn.monsterHits ?? []).map((h) => ({ key, h })))
     .sort((a, b) => a.h.order - b.h.order);
   if (hits.length === 0) return;
-  await phaseBanner(run, "Monsters attack");
+  await phaseBanner(run, "Monsters act");
   for (const { key, h } of hits) {
     const side = recap.sides[key];
     const target = recap.sides[key === "player" ? "cpu" : "player"];
     const from = side.fieldCenter();
+    // Name the move over the attacker's field: "Flame Imp: Fire Breath".
+    floatText(run, { x: from.x - 60, y: from.y - 90, w: 120, h: 30 }, `${h.attacker}: ${h.ability ?? "Attack"}`, EFFECT_COLOR.monster, 16);
+    if (h.target === "self") {
+      playSfx("buff");
+      await sparkle(run, side.panel(), EFFECT_COLOR.buff, "up");
+      if (h.effects) floatText(run, side.panel(), h.effects, EFFECT_COLOR.buff, 22);
+      await wait(run, 250);
+      continue;
+    }
     if (h.target === "fighter") {
       await projectile(run, from, target.panel(), EFFECT_COLOR.monster, 9, { duration: 300 });
       hit(run, target, { damage: h.damage, guarded: h.guarded, resisted: h.resisted, damageType: h.damageType });

@@ -55,9 +55,15 @@ Vite serves it as-is.
    - Attacks and monsters can have an **element** (fire / water / electric) and put
      **statuses** on the target: Burn and Poison deal damage each round, Wet makes electric hit
      harder (and fire weaker), Acid lowers DEF/ER, Slow lowers priority, Blind halves damage.
-   - **Monster**: summons a monster to your field (3 slots). From the next round on it attacks
-     each round, fastest first: the enemy's monsters (a *guard* monster first), or the enemy
-     fighter once their field is empty. A guard monster also takes attack cards aimed at you.
+   - **Targets**: when you play a single-target attack card, you pick what it hits — the enemy
+     fighter or one of their monsters (skipped when they have no monsters). A *guard* monster
+     has to be targeted first. If your target is gone by the time the hit lands, it goes to a
+     guard, else the fighter.
+   - **Monster**: summons a monster to your field (3 slots). From the next round on, click it
+     to give it an order for that turn, paid with AP: **Attack** (its ATK, usually 1 AP) or its
+     **ability** (e.g. Flame Imp's Fire Breath, Stone Sentinel's Fortify), then pick the target.
+     Monsters without an order do nothing. Ordered monsters act after the attack cards,
+     fastest first, and hits on the fighter get past their DEF/MR/ER.
    - **Attack**: deals damage of a type (physical / magic / element / true). The defender's
      matching resistance stat (DEF / MR / ER — true ignores all of them) reduces it, and so does
      any active defend card of the same type — including one committed this same round.

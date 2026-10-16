@@ -67,9 +67,14 @@ Class-based, and modified by synergies.
 
 ### Monster
 
-- HP, ATK, Speed; up to 3 on a side's field. Acts from the round after it's summoned.
-- Attacks enemy monsters first (a *guard* monster before the others), then the enemy fighter,
-  ignoring their DEF/MR/ER. A guard monster also takes the enemy's single-target attack cards.
+- HP, ATK, Speed; up to 3 on a side's field. Can take orders from the round after it's summoned.
+- Acts only when ordered, once per turn, paid with AP: **attack** (`attackCost`, default 1) or its
+  **ability** (own AP cost; damage to a target and/or buff/debuff effects, e.g. Fortify,
+  Fire Breath, Overdrive, Infectious Bite, Grave Ward). Ordered monsters act after the attack
+  cards, fastest first (ties: dice). Hits on the enemy fighter ignore DEF/MR/ER.
+- **Targeting** (attack cards and monster orders): the player picks the enemy fighter or an enemy
+  monster. A *guard* monster must be targeted while it's on the field. A hit whose target is
+  gone when it lands goes to a guard, else the fighter.
 
 ## Card Design doc additions (implemented)
 
