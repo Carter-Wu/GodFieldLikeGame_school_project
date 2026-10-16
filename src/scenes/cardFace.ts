@@ -11,6 +11,7 @@ import { describeCard, type PlayRecord } from "../model/engine.ts";
 import type { DamageType, Element } from "../model/damageTypes.ts";
 
 export const AP_GEM_COLOR = 0x2f7fd0;
+export const AP_SHORT_COLOR = 0xc0392b; // a cost gem you can't pay right now
 
 // card: { cardId, category, name, damageType, description } -- a hand card
 // instance plus its describeCard() text, or one of a fighter's plays. The
@@ -22,6 +23,7 @@ export interface CardFaceData {
   damageType?: DamageType | null;
   element?: Element | null;
   cost?: number | null; // AP cost, drawn as a gem in the corner
+  costShort?: boolean; // not enough AP left for it: the gem turns red
   description?: string | null;
 }
 
@@ -96,14 +98,23 @@ export function drawCardFace(
 
   const px = (n: number): string => `${Math.round(n * scale)}px`;
 
-  // AP cost gem, top-left over the art.
+  // AP cost gem, top-left over the art -- red when there isn't enough AP
+  // left this turn to pay for it.
   if (card.cost !== null && card.cost !== undefined && !isUltimate) {
-    const gx = pad + 11 * scale;
-    const gy = pad + 11 * scale;
-    container.add(scene.add.circle(gx, gy, 10 * scale, AP_GEM_COLOR).setStrokeStyle(2 * scale, COLORS.background));
+    const gx = pad + 13 * scale;
+    const gy = pad + 13 * scale;
+    const color = card.costShort ? AP_SHORT_COLOR : AP_GEM_COLOR;
+    container.add(scene.add.circle(gx, gy, 13 * scale, color).setStrokeStyle(2.5 * scale, card.costShort ? 0xffd0c8 : 0xbfe0ff));
     container.add(
       scene.add
-        .text(gx, gy, String(card.cost), { fontFamily: FONT_FAMILY, fontSize: px(12), fontStyle: "800", color: TEXT.white })
+        .text(gx, gy, String(card.cost), {
+          fontFamily: FONT_FAMILY,
+          fontSize: px(16),
+          fontStyle: "900",
+          color: TEXT.white,
+          stroke: "#000000",
+          strokeThickness: 3 * scale,
+        })
         .setOrigin(0.5)
     );
   }

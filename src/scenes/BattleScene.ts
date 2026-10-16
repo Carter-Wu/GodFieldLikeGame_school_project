@@ -26,6 +26,7 @@ import {
   isBattleOver,
   fighterName,
   FIELD_SIZE,
+  AP_RULES,
   STATUS_LABEL,
   type Action,
   type Battle,
@@ -38,7 +39,7 @@ import {
 import { EFFECT_KIND, MODIFIER_MODE, STATUS, type StatusId } from "../model/effects.ts";
 import { RESIST_STAT } from "../model/damageTypes.ts";
 import type { StatKey } from "../model/stats.ts";
-import type { Card, DefendCard } from "../model/cardTypes.ts";
+import { cardCost, type Card, type DefendCard } from "../model/cardTypes.ts";
 import type { ClassDef } from "../model/classes.ts";
 import { allCards, allClasses } from "../model/catalog.ts";
 import { preloadIcons, classIconKey, ULTIMATE_ICON_KEY, CARD_ICON_KEY } from "../phaserIcons.ts";
@@ -59,7 +60,7 @@ import {
   useRenderScale,
   type Button,
 } from "./theme.ts";
-import { AP_GEM_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
+import { AP_GEM_COLOR, AP_SHORT_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
 import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
 // 1280x720 board layout: CPU strip top-center, player strip lower-center,
@@ -101,6 +102,16 @@ const CARD_H = 160;
 // clicking it again plays it onto your side of the arena, clicking anywhere
 // else puts it back.
 const FAN_OVERLAP = 44;
+
+// The big AP gauge, left of the hand (under the player strip): AP left this
+// turn as a number and as gems -- bright = still yours, pulsing = about to
+// be spent on the card you're looking at, dark = spent on this turn's picks,
+// faint = not unlocked yet (max AP grows by one every round).
+const AP_PANEL = { x: 240, y: 550, w: 168, h: 158 };
+const AP_PIP_R = 11;
+const AP_PIP_STEP = 29;
+const AP_LIVE = 0x4fb3ff;
+const AP_SPENT = 0x1d3550;
 const HOVER_LIFT = 14;
 const HOVER_SCALE = 1.12;
 const PREVIEW_SCALE = 1.45; // 160px card -> 232px, under a third of 720
@@ -260,6 +271,7 @@ export class BattleScene extends Phaser.Scene {
   playerPortrait!: Phaser.GameObjects.Container;
   statusText!: Phaser.GameObjects.Text;
   handContainer!: Phaser.GameObjects.Container;
+  apContainer!: Phaser.GameObjects.Container; // the AP gauge beside the hand
   slotsContainer!: Phaser.GameObjects.Container;
   fieldContainer!: Phaser.GameObjects.Container;
   ultimateButton!: Button;
@@ -494,6 +506,9 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5, 0)
     );
 
+    // Above the preview / targeting overlay (depth 900), so the gauge stays
+    // readable while you decide on a card.
+    this.apContainer = this.add.container(0, 0).setDepth(901);
     this.handContainer = this.add.container(0, HAND_Y);
     this.fieldContainer = this.add.container(0, 0);
     this.slotsContainer = this.add.container(0, 0);
@@ -920,6 +935,7 @@ export class BattleScene extends Phaser.Scene {
     this.drawSlots();
     this.renderHand(locked);
     this.renderLog();
+    this.drawApGauge();
     this.drawPreview(locked);
     if (!locked) {
       this.drawTargeting();
@@ -1317,6 +1333,103 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  // AP this turn would spend on what's being looked at right now: the
+  // previewed card, or the card / monster order whose target is being picked.
+  pendingSpend(): number {
+    const player = this.battle.player;
+    const previewed = player.hand.find((c) => c.id === this.previewedCardId);
+    if (previewed) return cardCost(previewed);
+    const t = this.targeting;
+    if (t?.kind === "card") return cardCost(t.card);
+    if (t?.kind === "order") {
+      const monster = player.field.find((m) => m.uid === t.uid);
+      return monster ? orderCost(monster, t.use) : 0;
+    }
+    return 0;
+  }
+
+  drawApGauge(): void {
+    const c = this.apContainer;
+    c.removeAll(true);
+    const { x, y, w, h } = AP_PANEL;
+    const player = this.battle.player;
+    const max = player.maxAp ?? player.ap;
+    const planning = !this.pendingTurn && this.canAct();
+    const left = planning ? this.plannedAp() : player.ap;
+    const preview = planning ? Math.min(left, this.pendingSpend()) : 0;
+    const short = planning && this.pendingSpend() > left;
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0b1626, 0.92);
+    bg.fillRoundedRect(x, y, w, h, 12);
+    bg.lineStyle(2, short ? AP_SHORT_COLOR : AP_GEM_COLOR, 1);
+    bg.strokeRoundedRect(x, y, w, h, 12);
+    c.add(bg);
+
+    c.add(
+      this.add
+        .text(x + w / 2, y + 8, "ACTION POINTS", { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: "#8fc8ff" })
+        .setOrigin(0.5, 0)
+    );
+    const big = this.add
+      .text(0, y + 22, String(left), {
+        fontFamily: FONT_FAMILY,
+        fontSize: "46px",
+        fontStyle: "900",
+        color: left === 0 ? "#7d8aa0" : TEXT.white,
+        stroke: "#000000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0, 0);
+    const of = this.add
+      .text(0, y + 44, `/ ${max}`, { fontFamily: FONT_FAMILY, fontSize: "20px", fontStyle: "800", color: "#8fc8ff" })
+      .setOrigin(0, 0);
+    const total = big.width + 6 + of.width;
+    big.setX(x + w / 2 - total / 2);
+    of.setX(big.x + big.width + 6);
+    c.add([big, of]);
+
+    // Gems: 5 per row, AP_RULES.max in all.
+    for (let i = 0; i < AP_RULES.max; i++) {
+      const px = x + w / 2 + ((i % 5) - 2) * AP_PIP_STEP;
+      const py = y + 92 + Math.floor(i / 5) * AP_PIP_STEP;
+      const gem = this.add.graphics();
+      if (i < left - preview) {
+        gem.fillStyle(AP_LIVE, 1).fillCircle(px, py, AP_PIP_R);
+        gem.fillStyle(0xffffff, 0.55).fillCircle(px - 3, py - 3, AP_PIP_R * 0.35);
+      } else if (i < left) {
+        // About to be spent on the card being looked at.
+        gem.fillStyle(0xffd23f, 1).fillCircle(px, py, AP_PIP_R);
+        this.tweens.add({ targets: gem, alpha: 0.35, duration: 380, yoyo: true, repeat: -1 });
+        gem.once("destroy", () => this.tweens.killTweensOf(gem));
+      } else if (i < max) {
+        gem.fillStyle(AP_SPENT, 1).fillCircle(px, py, AP_PIP_R);
+        gem.lineStyle(2, 0x2f7fd0, 0.8).strokeCircle(px, py, AP_PIP_R);
+      } else {
+        gem.lineStyle(1.5, 0x3a4a60, 0.7).strokeCircle(px, py, AP_PIP_R - 3);
+      }
+      c.add(gem);
+    }
+
+    let note: string;
+    let color: string = TEXT.muted;
+    if (!planning) {
+      note = isBattleOver(this.battle) ? "" : "turn sent";
+    } else if (short) {
+      note = `needs ${this.pendingSpend()} AP — not enough`;
+      color = "#ff8a80";
+    } else if (preview > 0) {
+      note = `→ ${left - preview} AP after this`;
+      color = "#ffd23f";
+    } else {
+      const spent = max - left;
+      note = spent > 0 ? `${spent} AP planned this turn` : `next round: ${Math.min(AP_RULES.max, max + AP_RULES.growth)} max AP`;
+    }
+    c.add(
+      this.add.text(x + w / 2, y + h - 16, note, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color }).setOrigin(0.5, 0)
+    );
+  }
+
   renderHand(locked: boolean): void {
     this.handContainer.removeAll(true);
     // Picked cards have moved onto the arena slot.
@@ -1324,12 +1437,19 @@ export class BattleScene extends Phaser.Scene {
     const cards = this.battle.player.hand.filter((c) => !stagedIds.has(c.id) && c.id !== this.previewedCardId);
     const step = CARD_W - FAN_OVERLAP;
     const totalW = cards.length * CARD_W - Math.max(0, cards.length - 1) * FAN_OVERLAP;
-    const x0 = GAME_WIDTH / 2 - totalW / 2;
+    // Centered, but never over the AP gauge on the left (big hands shift right).
+    const x0 = Math.max(GAME_WIDTH / 2 - totalW / 2, AP_PANEL.x + AP_PANEL.w + 8);
     cards.forEach((card, i) => this.drawHandCard(card, x0 + i * step, locked));
   }
 
+  // Face data for a hand card, with its cost gem red when this turn's AP
+  // left can't pay for it.
+  handFace(card: Card): CardFaceData {
+    return { ...cardFaceData(card), costShort: !this.pendingTurn && cardCost(card) > this.plannedAp() };
+  }
+
   drawHandCard(card: Card, x: number, locked: boolean): void {
-    const { container: cardContainer, bg } = drawCardFace(this, cardFaceData(card), CARD_W, CARD_H);
+    const { container: cardContainer, bg } = drawCardFace(this, this.handFace(card), CARD_W, CARD_H);
     cardContainer.setPosition(x, 0);
     if (locked) {
       cardContainer.setAlpha(0.5);
@@ -1375,7 +1495,7 @@ export class BattleScene extends Phaser.Scene {
     const h = CARD_H * PREVIEW_SCALE;
     const x = GAME_WIDTH / 2 - w / 2;
     const y = GAME_HEIGHT / 2 - h / 2 - 20;
-    const { container, bg } = drawCardFace(this, cardFaceData(card), w, h, { scale: PREVIEW_SCALE });
+    const { container, bg } = drawCardFace(this, this.handFace(card), w, h, { scale: PREVIEW_SCALE });
     const ring = this.add.graphics();
     ring.lineStyle(4, PREVIEW_RING, 1);
     ring.strokeRoundedRect(-7, -7, w + 14, h + 14, 16);
