@@ -4,9 +4,13 @@
 
 import type Phaser from "phaser";
 import { COLORS, TEXT, FONT_FAMILY, roundedRect } from "./theme.ts";
-import { CARD_ICON_KEY, ULTIMATE_ICON_KEY, damageAccentColor } from "../phaserIcons.ts";
+import { CARD_ICON_KEY, ULTIMATE_ICON_KEY, damageAccentColor, elementAccentColor } from "../phaserIcons.ts";
 import { loadedArtKey } from "../cardArt.ts";
-import type { DamageType } from "../model/damageTypes.ts";
+import { cardCost, type Card } from "../model/cardTypes.ts";
+import { describeCard, type LastAction } from "../model/engine.ts";
+import type { DamageType, Element } from "../model/damageTypes.ts";
+
+export const AP_GEM_COLOR = 0x2f7fd0;
 
 // card: { cardId, category, name, damageType, description } -- a hand card
 // instance plus its describeCard() text, or a fighter's lastAction. The
@@ -16,7 +20,40 @@ export interface CardFaceData {
   category: string;
   name?: string | null;
   damageType?: DamageType | null;
+  element?: Element | null;
+  cost?: number | null; // AP cost, drawn as a gem in the corner
   description?: string | null;
+}
+
+// Face data for a card instance (hand, arena slot, commit flight).
+export function cardFaceData(card: Card): CardFaceData {
+  return {
+    cardId: card.cardId,
+    category: card.category,
+    name: card.name,
+    damageType: "damageType" in card ? card.damageType : null,
+    element: card.element ?? null,
+    cost: cardCost(card),
+    description: describeCard(card),
+  };
+}
+
+// Face data for a resolved action (a fighter's lastAction): the card it
+// played, the gold ultimate card, or a plain "Rest" card.
+export function actionFace(action: LastAction, ultimateName: string): CardFaceData {
+  if (action.kind === "ultimate") {
+    return { category: "ultimate", name: ultimateName, description: `${action.damage ?? 0} damage` };
+  }
+  if (action.kind === "rest") return { category: "rest", name: "Rest", description: `+${action.apGained ?? 0} AP` };
+  return {
+    cardId: action.cardId,
+    category: action.category ?? "",
+    name: action.name,
+    damageType: action.damageType,
+    element: action.element ?? null,
+    cost: action.cost ?? null,
+    description: action.description,
+  };
 }
 
 export function drawCardFace(
@@ -53,12 +90,24 @@ export function drawCardFace(
     container.add(scene.add.image(pad + artW / 2, pad + artH / 2, iconKey).setDisplaySize(size, size));
   }
 
-  const accent = damageAccentColor(card.damageType ?? undefined);
+  const accent = elementAccentColor(card.element) ?? damageAccentColor(card.damageType ?? undefined);
   if (accent !== null) {
     container.add(scene.add.circle(pad + artW - 9 * scale, pad + 9 * scale, 5 * scale, accent).setStrokeStyle(1.5, COLORS.background));
   }
 
   const px = (n: number): string => `${Math.round(n * scale)}px`;
+
+  // AP cost gem, top-left over the art.
+  if (card.cost !== null && card.cost !== undefined && !isUltimate) {
+    const gx = pad + 11 * scale;
+    const gy = pad + 11 * scale;
+    container.add(scene.add.circle(gx, gy, 10 * scale, AP_GEM_COLOR).setStrokeStyle(2 * scale, COLORS.background));
+    container.add(
+      scene.add
+        .text(gx, gy, String(card.cost), { fontFamily: FONT_FAMILY, fontSize: px(12), fontStyle: "800", color: TEXT.white })
+        .setOrigin(0.5)
+    );
+  }
   let y = pad + artH + 4 * scale;
   container.add(
     scene.add

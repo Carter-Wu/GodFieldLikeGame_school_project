@@ -13,7 +13,7 @@
 // receives the other's cards.
 
 import { findClassById } from "./catalog.ts";
-import type { Battle, Fighter, LastAction } from "./engine.ts";
+import { AP_RULES, type Battle, type Fighter, type LastAction } from "./engine.ts";
 import type { Card } from "./cardTypes.ts";
 
 export interface SerializedFighter {
@@ -21,6 +21,9 @@ export interface SerializedFighter {
   label: string | null;
   hp: number;
   maxHp: number;
+  ap?: number;
+  field?: Fighter["field"];
+  statuses?: Fighter["statuses"];
   ultimateMeter: number;
   cardsPlayedByCategory: Record<string, number>;
   activeDefends: Fighter["activeDefends"];
@@ -53,6 +56,9 @@ export function serializeFighter(
     label: fighter.label ?? null,
     hp: fighter.hp,
     maxHp: fighter.maxHp,
+    ap: fighter.ap,
+    field: fighter.field,
+    statuses: fighter.statuses,
     ultimateMeter: fighter.ultimateMeter,
     cardsPlayedByCategory: fighter.cardsPlayedByCategory,
     activeDefends: fighter.activeDefends,
@@ -81,9 +87,13 @@ export function deserializeFighter(data: SerializedFighter, hand: Card[] = data.
     label: data.label ?? null,
     hp: data.hp,
     maxHp: data.maxHp,
+    // Missing on battles stored before AP / monsters / statuses existed.
+    ap: data.ap ?? AP_RULES.start,
     deck: data.deck ?? [],
     discard: data.discard ?? [],
     hand,
+    field: data.field ?? [],
+    statuses: data.statuses ?? {},
     ultimateMeter: data.ultimateMeter,
     cardsPlayedByCategory: data.cardsPlayedByCategory,
     activeDefends: data.activeDefends,

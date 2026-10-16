@@ -1,10 +1,10 @@
 import { useMemo, useState, type ReactElement } from "react";
 import { allCards, deckEntriesForCard, getCatalog, type CatalogCardEntry } from "../model/catalog.ts";
-import { CARD_CATEGORY } from "../model/cardTypes.ts";
+import { CARD_CATEGORY, cardCost } from "../model/cardTypes.ts";
 import { describeCard } from "../model/engine.ts";
 import type { Card } from "../model/cardTypes.ts";
 
-const CATEGORY_ORDER = [CARD_CATEGORY.ATTACK, CARD_CATEGORY.DEFEND, CARD_CATEGORY.BUFF, CARD_CATEGORY.DEBUFF];
+const CATEGORY_ORDER = [CARD_CATEGORY.ATTACK, CARD_CATEGORY.DEFEND, CARD_CATEGORY.BUFF, CARD_CATEGORY.DEBUFF, CARD_CATEGORY.MONSTER];
 const ALL = "all";
 const PAGE_SIZE = 10;
 
@@ -101,7 +101,9 @@ function GalleryCard({ card }: { card: CatalogCardEntry }): ReactElement {
         <div className={`gallery-art fallback ${card.category}`}>{capitalize(card.category)}</div>
       )}
       <div className="gallery-name">{card.name}</div>
-      <div className="gallery-desc">{description}</div>
+      <div className="gallery-desc">
+        {cardCost(card.props)} AP · {description}
+      </div>
       <div className="gallery-decks">
         {entries.length > 0
           ? entries.map((e) => `${e.classDef.name} ×${e.copies}`).join(" · ")

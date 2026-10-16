@@ -234,6 +234,7 @@ body {
 .gallery-art.fallback.defend { background: #2f6f8f; }
 .gallery-art.fallback.buff { background: #3a8f5a; }
 .gallery-art.fallback.debuff { background: #6a4a94; }
+.gallery-art.fallback.monster { background: #8a6a2a; }
 
 .gallery-name {
   margin-top: 8px;

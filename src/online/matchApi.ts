@@ -89,11 +89,16 @@ export const joinMatch = (code: string, classId: string, deckId: string | null):
 export const leaveMatch = (matchId: string): Promise<Record<string, never>> =>
   callGame({ op: "leave", matchId });
 
-// action: an engine action from cardAction()/ultimateAction(); only the card
-// id goes over the wire -- the server re-checks it against its own copy.
+// action: an engine action from cardAction()/ultimateAction()/restAction();
+// only the card id goes over the wire -- the server re-checks it against its
+// own copy.
 export function submitAction(matchId: string, action: Action): Promise<{ resolved: boolean }> {
   const wire: ClientAction =
-    action.kind === "card" ? { kind: "card", cardId: action.card.id } : { kind: "ultimate" };
+    action.kind === "card"
+      ? { kind: "card", cardId: action.card.id }
+      : action.kind === "ultimate"
+        ? { kind: "ultimate" }
+        : { kind: "rest" };
   return callGame({ op: "submit", matchId, action: wire });
 }
 

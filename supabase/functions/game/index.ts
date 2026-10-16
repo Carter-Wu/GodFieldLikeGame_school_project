@@ -13,7 +13,7 @@
 //       deckId: one of the caller's own `decks` rows for that class;
 //       omitted/null = the class's starter deck.
 //   { op: "submit", matchId, action }    -> { resolved }
-//       action: { kind: "card", cardId } | { kind: "ultimate" }
+//       action: { kind: "card", cardId } | { kind: "ultimate" } | { kind: "rest" }
 //   { op: "leave", matchId }             -> {}
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -21,6 +21,7 @@ import {
   createBattle,
   cardAction,
   ultimateAction,
+  restAction,
   resolveRound,
   isBattleOver,
   type Action,
@@ -133,6 +134,7 @@ async function loadDeckList(userId: string, classDef: ClassDef, deckId: unknown)
 function toEngineAction(fighter: Fighter, action: ClientAction | null | undefined): Action | null {
   if (action?.kind === "card") return cardAction(fighter, Number(action.cardId));
   if (action?.kind === "ultimate") return ultimateAction(fighter);
+  if (action?.kind === "rest") return restAction();
   return null;
 }
 
@@ -224,7 +226,7 @@ async function submitAction(userId: string, body: { matchId?: unknown; action?: 
   const fighter = side === "p1" ? battle.player : battle.cpu;
   const action = body.action as ClientAction | undefined;
   if (!toEngineAction(fighter, action)) throw new HttpError(400, "You can't play that right now");
-  const stored = action.kind === "card" ? { kind: "card", cardId: Number(action.cardId) } : { kind: "ultimate" };
+  const stored = action.kind === "card" ? { kind: "card", cardId: Number(action.cardId) } : { kind: action.kind };
 
   // Flag "ready" BEFORE storing the move: whichever request ends up resolving
   // the round only does so after seeing this move stored, so its reset of

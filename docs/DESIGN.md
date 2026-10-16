@@ -65,6 +65,39 @@ Class-based, and modified by synergies.
 - Disables a synergy
 - Meter siphon? (drains an opponent's ultimate/energy meter)
 
+### Monster
+
+- HP, ATK, Speed; up to 3 on a side's field. Acts from the round after it's summoned.
+- Attacks enemy monsters first (a *guard* monster before the others), then the enemy fighter,
+  ignoring their DEF/MR/ER. A guard monster also takes the enemy's single-target attack cards.
+
+## Card Design doc additions (implemented)
+
+From the team's "Card Design" doc; see `src/model/engine.ts` for the exact rules.
+
+- **AP**: every card has a cost. Start 3, +2 per round, cap 10, unspent AP carries over.
+  "Rest" plays nothing for +1 extra AP. Some cards also cost HP or ultimate meter (Black Mage).
+- **UA charge**: cards can add extra ultimate meter when played (Master Craftsman).
+- **Priority and dice**: attacks/ultimates resolve by priority (fast cards first, Slow lowers
+  it); equal priority → both roll a die. A knockout or a landed "interrupts" card cancels the
+  slower attack — this is the doc's "some players' turns can be blocked".
+- **Elements and statuses**: fire / water / electric affinity; Burn, Poison (stacks), Wet
+  (electric +50%, fire −50% and dries), Acid (−DEF/ER), Slow, Blind (half damage). Water puts
+  out Burn; Burn can't catch on a Wet target.
+- **General cards** in every deck; **classes**: Guardian, Pyromancer, Black Mage, Master
+  Craftsman, Necromancer.
+- **ATK stat**: flat bonus to attack cards (weapons, Craftsman's ultimate).
+
+Not done yet from that doc:
+
+- Playing several cards per turn with your AP (still one card per round — the recap UI and the
+  online protocol are built around one move per side).
+- QTE / clash when both players fire their ultimate in the same round.
+- Best Friend class (one special monster + evolution card), and the other Summoner / Mage /
+  Black Mage sub-classes (Warlock, Vampire, Entomologist, Zoologist, Botanist, Mycologist,
+  Plague Doctor).
+- The new hand layout (card moves to the center at ⅓ screen, confirm by clicking again).
+
 ## Architecture implications
 
 The game is a single static-HTML page with no server: one browser tab runs both the

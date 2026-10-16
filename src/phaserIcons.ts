@@ -5,9 +5,9 @@
 // loader, which rasterizes it into a texture at load time.
 
 import type Phaser from "phaser";
-import { cardIconMarkup, classIconMarkup, ultimateIconMarkup, DAMAGE_TYPE_ACCENT } from "./icons.ts";
+import { cardIconMarkup, classIconMarkup, ultimateIconMarkup, DAMAGE_TYPE_ACCENT, ELEMENT_ACCENT } from "./icons.ts";
 import { CARD_CATEGORY, type CardCategory } from "./model/cardTypes.ts";
-import type { DamageType } from "./model/damageTypes.ts";
+import type { DamageType, Element } from "./model/damageTypes.ts";
 import type { ClassDef } from "./model/classes.ts";
 
 // Rasterized well above the largest on-screen icon size (~30px) so icons stay
@@ -19,6 +19,7 @@ export const CARD_ICON_KEY: Record<CardCategory, string> = {
   [CARD_CATEGORY.DEFEND]: "icon-card-defend",
   [CARD_CATEGORY.BUFF]: "icon-card-buff",
   [CARD_CATEGORY.DEBUFF]: "icon-card-debuff",
+  [CARD_CATEGORY.MONSTER]: "icon-card-monster",
 };
 
 export const ULTIMATE_ICON_KEY = "icon-ultimate";
@@ -54,5 +55,12 @@ export function preloadIcons(scene: Phaser.Scene, classDefs: ClassDef[]): void {
 export function damageAccentColor(damageType: DamageType | undefined): number | null {
   if (!damageType) return null;
   const hex = DAMAGE_TYPE_ACCENT[damageType];
+  return hex ? parseInt(hex.slice(1), 16) : null;
+}
+
+// Same for an element (fire / water / electric), or null for none.
+export function elementAccentColor(element: Element | null | undefined): number | null {
+  if (!element) return null;
+  const hex = ELEMENT_ACCENT[element];
   return hex ? parseInt(hex.slice(1), 16) : null;
 }

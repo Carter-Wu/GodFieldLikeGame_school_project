@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactElement } from "react";
 import type { ClassDef } from "../model/classes.ts";
-import type { Card } from "../model/cardTypes.ts";
+import { cardCost, type Card } from "../model/cardTypes.ts";
 import { describeCard } from "../model/engine.ts";
 import {
   DECK_RULES,
@@ -201,7 +201,9 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
                 )}
                 <div className="deck-row-text">
                   <div className="gallery-name">{card.name}</div>
-                  <div className="gallery-desc">{description}</div>
+                  <div className="gallery-desc">
+                    {cardCost(card.props)} AP · {description}
+                  </div>
                 </div>
                 <div className="deck-stepper">
                   <button

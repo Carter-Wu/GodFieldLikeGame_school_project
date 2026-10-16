@@ -14,24 +14,29 @@ import {
   createBattle,
   cardAction,
   ultimateAction,
+  restAction,
+  unplayableReason,
   playRound,
-  describeCard,
   describeEffect,
   isBattleOver,
   fighterName,
+  AP_RULES,
+  FIELD_SIZE,
+  STATUS_LABEL,
   type Action,
   type Battle,
   type Fighter,
   type LastAction,
+  type Monster,
 } from "../model/engine.ts";
-import { EFFECT_KIND, MODIFIER_MODE } from "../model/effects.ts";
+import { EFFECT_KIND, MODIFIER_MODE, STATUS, type StatusId } from "../model/effects.ts";
 import { RESIST_STAT } from "../model/damageTypes.ts";
 import type { StatKey } from "../model/stats.ts";
 import type { Card, DefendCard } from "../model/cardTypes.ts";
 import type { ClassDef } from "../model/classes.ts";
 import { allCards, allClasses } from "../model/catalog.ts";
 import { preloadIcons, classIconKey, ULTIMATE_ICON_KEY, CARD_ICON_KEY } from "../phaserIcons.ts";
-import { loadCardArt } from "../cardArt.ts";
+import { loadCardArt, loadedArtKey } from "../cardArt.ts";
 import { isMuted, playSfx, setMuted } from "../fx/sound.ts";
 import {
   COLORS,
@@ -48,7 +53,7 @@ import {
   useRenderScale,
   type Button,
 } from "./theme.ts";
-import { drawCardFace } from "./cardFace.ts";
+import { AP_GEM_COLOR, actionFace, cardFaceData, drawCardFace } from "./cardFace.ts";
 import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RecapSlotView, type RoundRecapRun } from "./roundRecap.ts";
 
 // 1280x720 board layout: CPU strip top-center, player strip lower-center,
@@ -78,6 +83,7 @@ const BUTTON_W = 176;
 const BUTTON_H = 40;
 const ULTIMATE_BUTTON_Y = 296;
 const LEAVE_BUTTON_Y = 346;
+const REST_BUTTON_Y = 396;
 
 const HAND_Y = 548;
 const CARD_W = 112;
@@ -100,6 +106,27 @@ const SLOT_H = 190;
 const SLOT_Y = 195;
 const SLOT_GAP = 20;
 const SLOT_TOTAL_W = SLOT_W * 2 + SLOT_GAP;
+
+// Monster fields, flanking the arena slots on the side of their owner's
+// slot: the CPU's to the left, the player's to the right.
+const FIELD_W = 228;
+const FIELD_Y = 206;
+const FIELD_H = 176;
+const CPU_FIELD_X = STRIP_X;
+const PLAYER_FIELD_X = STRIP_X + STRIP_W - FIELD_W;
+const MONSTER_W = 72;
+const MONSTER_H = 136;
+const MONSTER_GAP = (FIELD_W - MONSTER_W * FIELD_SIZE) / (FIELD_SIZE - 1);
+const MONSTER_GUARD = 0x6ec6ff;
+
+const STATUS_COLOR: Record<StatusId, number> = {
+  [STATUS.BURNING]: 0xc4511d,
+  [STATUS.POISON]: 0x4f8a2e,
+  [STATUS.WET]: 0x2f6fb0,
+  [STATUS.ACID]: 0x8a9a1e,
+  [STATUS.SLOWED]: 0x56658a,
+  [STATUS.BLIND]: 0x4a4f60,
+};
 
 // Commit flight: hand card tosses into its slot before resolution (~260ms).
 const FLIGHT_DURATION = 260;
@@ -127,6 +154,7 @@ const STAT_CHIPS: Array<{ key: StatKey; label: string; color: number }> = [
   { key: "mr", label: "MR", color: 0xb388ff },
   { key: "er", label: "ER", color: 0xff9d4d },
   { key: "ur", label: "UR", color: 0xffe066 },
+  { key: "atk", label: "ATK", color: 0xff6b5f },
 ];
 
 const CHIP_COLOR = {
@@ -226,7 +254,10 @@ export class BattleScene extends Phaser.Scene {
   statusText!: Phaser.GameObjects.Text;
   handContainer!: Phaser.GameObjects.Container;
   slotsContainer!: Phaser.GameObjects.Container;
+  fieldContainer!: Phaser.GameObjects.Container;
   ultimateButton!: Button;
+  restButton!: Button;
+  handHint: string | null = null; // why the card just clicked can't be played
   previewedCardId: number | null = null; // card id held in full preview (click/tap once; commits on second)
   animatePreview = false; // tween the pop-in only on the selecting render, never on rebuilds
   previewedView: Phaser.GameObjects.Container | null = null; // live popped container, for glide-back dismiss
@@ -326,6 +357,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   commitAction(action: Action): void {
+    this.handHint = null;
     this.previewedCardId = null;
     this.animatePreview = false;
     this.previewedView = null;
@@ -415,18 +447,7 @@ export class BattleScene extends Phaser.Scene {
     const step = CARD_W - FAN_OVERLAP;
     const totalW = this.battle.player.hand.length * CARD_W - Math.max(0, this.battle.player.hand.length - 1) * FAN_OVERLAP;
     const fx = GAME_WIDTH / 2 - totalW / 2 + Math.max(0, idx) * step;
-    const { container } = drawCardFace(
-      this,
-      {
-        cardId: card.cardId,
-        category: card.category,
-        name: card.name,
-        damageType: "damageType" in card ? card.damageType : null,
-        description: describeCard(card),
-      },
-      CARD_W,
-      CARD_H
-    );
+    const { container } = drawCardFace(this, cardFaceData(card), CARD_W, CARD_H);
     container.setPosition(fx, HAND_Y);
     this.flightLayer.add(container);
     this.flightView = container;
@@ -460,7 +481,8 @@ export class BattleScene extends Phaser.Scene {
   statusMessage(): string {
     if (this.battle.winner) return `${fighterName(this.battle.winner)} wins! Press "Restart" to play again.`;
     if (this.battle.draw) return `Draw! Press "Restart" to play again.`;
-    return `Round ${this.battle.round} — pick a card. The CPU is choosing at the same time.`;
+    if (this.handHint) return `Round ${this.battle.round} — ${this.handHint}`;
+    return `Round ${this.battle.round} — pick a card (you have ${this.battle.player.ap} AP) or rest. The CPU is choosing at the same time.`;
   }
 
   // --- scene ---------------------------------------------------------------
@@ -558,6 +580,7 @@ export class BattleScene extends Phaser.Scene {
     );
 
     this.handContainer = this.add.container(0, HAND_Y);
+    this.fieldContainer = this.add.container(0, 0);
     this.slotsContainer = this.add.container(0, 0);
     this.flightLayer = this.add.container(0, 0);
 
@@ -572,6 +595,12 @@ export class BattleScene extends Phaser.Scene {
       color: COLORS.restart,
       hoverColor: COLORS.restartHover,
       onClick: () => this.onLeave(),
+    });
+
+    this.restButton = createButton(this, BUTTON_X, REST_BUTTON_Y, BUTTON_W, BUTTON_H, `Rest (+${AP_RULES.restBonus} AP)`, {
+      color: AP_GEM_COLOR,
+      hoverColor: 0x4a95e0,
+      onClick: () => this.onRestClick(),
     });
 
     this.add
@@ -653,6 +682,13 @@ export class BattleScene extends Phaser.Scene {
     this.commitAction(action);
   }
 
+  onRestClick(): void {
+    if (!this.canAct()) return;
+    this.pendingPlay = { playerCard: null, round: this.battle.round, cpuRevealed: false };
+    this.render();
+    this.commitAction(restAction());
+  }
+
   // --- round recap -----------------------------------------------------------
 
   currentHp(): HpPair {
@@ -691,6 +727,7 @@ export class BattleScene extends Phaser.Scene {
       ultimateName: ultimateName(fighter.classDef),
       hp: before[key],
       panel: () => this.panelViews[key] as RecapPanel,
+      fieldCenter: () => ({ x: (key === "cpu" ? CPU_FIELD_X : PLAYER_FIELD_X) + FIELD_W / 2, y: FIELD_Y + FIELD_H / 2 }),
       slot: (): RecapSlotView | null => {
         const view = this.slotViews[key];
         if (!view) return null;
@@ -866,12 +903,14 @@ export class BattleScene extends Phaser.Scene {
     this.renderFighterPanel("player", this.playerPanel, STRIP_X, PLAYER_STRIP_Y, STRIP_W, this.battle.player);
     this.drawPortrait(this.cpuPortrait, PORTRAIT_X, CPU_PORTRAIT_Y, this.battle.cpu, this.opponentLabel);
     this.drawPortrait(this.playerPortrait, PORTRAIT_X, PLAYER_PORTRAIT_Y, this.battle.player, this.playerLabel);
+    this.drawFields();
     this.drawSlots();
     this.renderHand(locked);
     this.renderLog();
 
     this.statusText.setText(this.statusMessage());
     this.ultimateButton.setEnabled(!locked && canUseUltimate(this.battle.player));
+    this.restButton.setEnabled(!locked);
 
     if (isBattleOver(this.battle) && !this.recapPlaying) this.showResult();
   }
@@ -951,14 +990,26 @@ export class BattleScene extends Phaser.Scene {
   }
 
   drawPanelHeader(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
-    container.add(
-      this.add.text(STRIP_PAD, 6, shortName(fighter.classDef.name), {
-        fontFamily: FONT_FAMILY,
-        fontSize: "14px",
-        fontStyle: "700",
-        color: TEXT.white,
-      })
-    );
+    const name = this.add.text(STRIP_PAD, 6, shortName(fighter.classDef.name), {
+      fontFamily: FONT_FAMILY,
+      fontSize: "14px",
+      fontStyle: "700",
+      color: TEXT.white,
+    });
+    container.add(name);
+
+    // AP pill beside the name: current / cap.
+    const apText = this.add
+      .text(0, 0, `AP ${fmt(fighter.ap)}/${AP_RULES.max}`, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: TEXT.white })
+      .setOrigin(0, 0.5);
+    const pillX = STRIP_PAD + name.width + 10;
+    const pillW = apText.width + 16;
+    const pill = this.add.graphics();
+    pill.fillStyle(AP_GEM_COLOR, 1);
+    pill.fillRoundedRect(pillX, 5, pillW, 18, 9);
+    apText.setPosition(pillX + 8, 14);
+    container.add([pill, apText]);
+
     const handCount = fighter.handCount ?? fighter.hand.length;
     container.add(
       this.add
@@ -1146,6 +1197,12 @@ export class BattleScene extends Phaser.Scene {
   drawEffectChips(container: Phaser.GameObjects.Container, fighter: Fighter, w: number, y: number, maxX: number): void {
     const chips: Array<{ text: string; color: number }> = [];
 
+    // Statuses first: they're what most needs noticing.
+    for (const [id, state] of Object.entries(fighter.statuses ?? {}) as Array<[StatusId, { potency: number; remaining: number }]>) {
+      const potency = id === STATUS.WET || id === STATUS.BLIND ? "" : ` ${state.potency}`;
+      chips.push({ text: `${STATUS_LABEL[id] ?? id}${potency} · ${state.remaining}t`, color: STATUS_COLOR[id] ?? CHIP_COLOR.down });
+    }
+
     for (const synergy of fighter.classDef.synergyPool) {
       const count = fighter.cardsPlayedByCategory[synergy.countsCategory] ?? 0;
       const disabledFor = fighter.disabledSynergyTimers[synergy.id];
@@ -1169,12 +1226,9 @@ export class BattleScene extends Phaser.Scene {
     }
 
     for (const { effect, remaining } of fighter.tempModifiers) {
+      // Only stat modifiers and regen end up here (see applyEffects).
       const positive =
-        effect.kind === EFFECT_KIND.ENERGY_REGEN ||
-        (effect.kind !== EFFECT_KIND.SYNERGY_DISABLE &&
-          effect.kind !== EFFECT_KIND.SUMMON &&
-          effect.kind !== EFFECT_KIND.CONDITIONAL &&
-          effect.amount >= 0);
+        effect.kind === EFFECT_KIND.ENERGY_REGEN || (effect.kind === EFFECT_KIND.STAT_MODIFIER && effect.amount >= 0);
       chips.push({ text: `${describeEffect(effect)} · ${remaining}t`, color: positive ? CHIP_COLOR.up : CHIP_COLOR.down });
     }
 
@@ -1262,18 +1316,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   drawHandCard(card: Card, x: number, previewed: boolean, locked: boolean): void {
-    const { container: cardContainer, bg } = drawCardFace(
-      this,
-      {
-        cardId: card.cardId,
-        category: card.category,
-        name: card.name,
-        damageType: "damageType" in card ? card.damageType : null,
-        description: describeCard(card),
-      },
-      CARD_W,
-      CARD_H
-    );
+    const { container: cardContainer, bg } = drawCardFace(this, cardFaceData(card), CARD_W, CARD_H);
+    const blocked = unplayableReason(this.battle.player, card);
     if (previewed) {
       const ring = this.add.graphics();
       ring.lineStyle(3, PREVIEW_RING, 1);
@@ -1302,7 +1346,15 @@ export class BattleScene extends Phaser.Scene {
       cardContainer.setPosition(x, 0);
     }
 
-    if (!locked) {
+    if (!locked && blocked) {
+      // Can't pay for it: dimmed, and a click just says why.
+      cardContainer.setAlpha(0.55);
+      bg.on("pointerdown", () => {
+        this.handHint = `can't play ${card.name}: ${blocked}.`;
+        if (this.previewedCardId !== null) this.dismissPreview();
+        else this.statusText.setText(this.statusMessage());
+      });
+    } else if (!locked) {
       bg.on("pointerover", (pointer: Phaser.Input.Pointer) => {
         if (pointer.wasTouch || this.previewedCardId === card.id) return;
         this.tweens.killTweensOf(cardContainer);
@@ -1320,6 +1372,7 @@ export class BattleScene extends Phaser.Scene {
         }
         this.previewedCardId = card.id;
         this.animatePreview = true;
+        this.handHint = null;
         this.render();
       });
     } else {
@@ -1377,34 +1430,14 @@ export class BattleScene extends Phaser.Scene {
       let card: Phaser.GameObjects.Container | null = null;
       let isBack = false;
       if (key === "player" && pending?.playerCard) {
-        const played = pending.playerCard;
-        const { container } = drawCardFace(
-          this,
-          {
-            cardId: played.cardId,
-            category: played.category,
-            name: played.name,
-            damageType: "damageType" in played ? played.damageType : null,
-            description: describeCard(played),
-          },
-          CARD_W,
-          CARD_H
-        );
+        const { container } = drawCardFace(this, cardFaceData(pending.playerCard), CARD_W, CARD_H);
         container.setPosition(fx, fy);
         this.slotsContainer.add(container);
         card = container;
       } else if (key === "cpu" && pending) {
         const last = fighter.lastAction;
         if (last && last.round === pending.round && pending.cpuRevealed && last.kind !== "none") {
-          const face =
-            last.kind === "ultimate"
-              ? {
-                  category: "ultimate",
-                  name: ultimateName(fighter.classDef),
-                  description: `${fmt(last.damage ?? 0)} damage`,
-                }
-              : { ...last, category: last.category ?? "" };
-          const { container } = drawCardFace(this, face, CARD_W, CARD_H);
+          const { container } = drawCardFace(this, actionFace(last, ultimateName(fighter.classDef)), CARD_W, CARD_H);
           container.setPosition(fx, fy);
           this.slotsContainer.add(container);
           card = container;
@@ -1427,6 +1460,127 @@ export class BattleScene extends Phaser.Scene {
       }
       this.slotViews[key] = { card, isBack };
     }
+  }
+
+  // Both monster fields, beside their owner's arena slot.
+  drawFields(): void {
+    this.fieldContainer.removeAll(true);
+    const sides: Array<{ fighter: Fighter; x: number; label: string }> = [
+      { fighter: this.battle.cpu, x: CPU_FIELD_X, label: `${this.opponentLabel} field` },
+      { fighter: this.battle.player, x: PLAYER_FIELD_X, label: "Your field" },
+    ];
+    for (const { fighter, x, label } of sides) {
+      const field = fighter.field ?? [];
+      const backing = this.add.graphics();
+      backing.fillStyle(0x0b0d15, 0.5);
+      backing.fillRoundedRect(x, FIELD_Y, FIELD_W, FIELD_H, 10);
+      this.fieldContainer.add(backing);
+      this.fieldContainer.add(
+        this.add.text(x + 8, FIELD_Y + 5, `${label.toUpperCase()} ${field.length}/${FIELD_SIZE}`, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "10px",
+          fontStyle: "700",
+          color: TEXT.muted,
+        })
+      );
+      if (field.length === 0) {
+        this.fieldContainer.add(
+          this.add
+            .text(x + FIELD_W / 2, FIELD_Y + FIELD_H / 2 + 8, "no monsters", { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
+            .setOrigin(0.5)
+            .setAlpha(0.7)
+        );
+      }
+      field.forEach((monster, i) => {
+        this.drawMonster(monster, x + i * (MONSTER_W + MONSTER_GAP), FIELD_Y + 26, monster.summonedRound >= this.battle.round);
+      });
+    }
+  }
+
+  // One monster token: art, name, HP bar, ATK/SPD, and a blue frame for a
+  // guard. `fresh`: summoned this round, so it only starts attacking next one.
+  drawMonster(monster: Monster, x: number, y: number, fresh: boolean): void {
+    const c = this.add.container(x, y);
+    const g = this.add.graphics();
+    g.fillStyle(COLORS.card.monster, 1);
+    g.fillRoundedRect(0, 0, MONSTER_W, MONSTER_H, 8);
+    if (monster.guard) {
+      g.lineStyle(3, MONSTER_GUARD, 1);
+      g.strokeRoundedRect(1.5, 1.5, MONSTER_W - 3, MONSTER_H - 3, 8);
+    }
+    c.add(g);
+
+    const artW = MONSTER_W - 8;
+    const artH = Math.round(artW * 0.75);
+    const box = this.add.graphics();
+    box.fillStyle(COLORS.background, 0.45);
+    box.fillRoundedRect(4, 4, artW, artH, 6);
+    c.add(box);
+    const artKey = loadedArtKey(this, monster.cardId);
+    if (artKey) {
+      c.add(this.add.image(4 + artW / 2, 4 + artH / 2, artKey).setDisplaySize(artW - 2, artH - 2));
+    } else if (this.textures.exists(CARD_ICON_KEY.monster)) {
+      c.add(this.add.image(4 + artW / 2, 4 + artH / 2, CARD_ICON_KEY.monster).setDisplaySize(30, 30));
+    }
+
+    c.add(
+      this.add
+        .text(MONSTER_W / 2, artH + 7, monster.name, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "10px",
+          fontStyle: "700",
+          color: TEXT.white,
+          align: "center",
+          wordWrap: { width: MONSTER_W - 6 },
+        })
+        .setOrigin(0.5, 0)
+    );
+
+    const tags = [monster.guard ? "GUARD" : "", fresh ? "NEW" : ""].filter(Boolean).join(" · ");
+    if (tags) {
+      c.add(
+        this.add
+          .text(MONSTER_W / 2, MONSTER_H - 48, tags, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "800", color: monster.guard ? "#8fd3ff" : "#ffe9a8" })
+          .setOrigin(0.5, 0)
+      );
+    }
+
+    const barX = 5;
+    const barW = MONSTER_W - 10;
+    const barY = MONSTER_H - 34;
+    const bar = this.add.graphics();
+    bar.fillStyle(COLORS.meterTrack, 1);
+    bar.fillRoundedRect(barX, barY, barW, 12, 5);
+    const pct = Phaser.Math.Clamp(monster.hp / monster.maxHp, 0, 1);
+    if (pct > 0) {
+      bar.fillStyle(hpColor(pct), 1);
+      bar.fillRoundedRect(barX, barY, barW * pct, 12, Math.min(5, (barW * pct) / 2));
+    }
+    c.add(bar);
+    c.add(
+      this.add
+        .text(MONSTER_W / 2, barY + 6, `${Math.ceil(monster.hp)}/${monster.maxHp}`, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "9px",
+          fontStyle: "800",
+          color: TEXT.white,
+          stroke: "#000000",
+          strokeThickness: 2,
+        })
+        .setOrigin(0.5)
+    );
+    c.add(
+      this.add
+        .text(MONSTER_W / 2, MONSTER_H - 17, `ATK ${monster.atk} · SPD ${monster.speed}`, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "9px",
+          fontStyle: "700",
+          color: TEXT.white,
+        })
+        .setOrigin(0.5, 0)
+    );
+    if (fresh) c.setAlpha(0.8);
+    this.fieldContainer.add(c);
   }
 
   renderLog(): void {

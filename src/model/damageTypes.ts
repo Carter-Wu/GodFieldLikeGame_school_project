@@ -19,3 +19,17 @@ export const RESIST_STAT: Record<Exclude<DamageType, "true">, StatKey> = {
   [DAMAGE_TYPE.MAGIC]: "mr",
   [DAMAGE_TYPE.ELEMENT]: "er",
 };
+
+// Elemental affinity, on top of the damage type (docs: "Element/Type ... fire,
+// water, electric"). Optional on attack and monster cards; it only matters
+// through the status interactions in engine.ts:
+//   - electric damage against a Wet target deals +50%
+//   - fire damage against a Wet target deals -50% and dries it (removes Wet)
+//   - water damage puts out Burning
+export const ELEMENT = {
+  FIRE: "fire",
+  WATER: "water",
+  ELECTRIC: "electric",
+} as const;
+
+export type Element = (typeof ELEMENT)[keyof typeof ELEMENT];

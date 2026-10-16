@@ -6,7 +6,7 @@
 // This is UI-only (produces markup strings), so it lives alongside the UI
 // rather than in src/model/, which stays DOM-free.
 
-import { DAMAGE_TYPE, type DamageType } from "./model/damageTypes.ts";
+import { DAMAGE_TYPE, ELEMENT, type DamageType, type Element } from "./model/damageTypes.ts";
 import { CARD_CATEGORY, type CardCategory } from "./model/cardTypes.ts";
 
 export const DAMAGE_TYPE_ACCENT: Record<DamageType, string> = {
@@ -14,6 +14,14 @@ export const DAMAGE_TYPE_ACCENT: Record<DamageType, string> = {
   [DAMAGE_TYPE.MAGIC]: "#b388ff",
   [DAMAGE_TYPE.ELEMENT]: "#ff9d4d",
   [DAMAGE_TYPE.TRUE]: "#ffe066",
+};
+
+// Elements (damageTypes.ts ELEMENT) get their own accent, drawn instead of
+// the damage-type one when a card has an element.
+export const ELEMENT_ACCENT: Record<Element, string> = {
+  [ELEMENT.FIRE]: "#ff7a1a",
+  [ELEMENT.WATER]: "#4fa3ff",
+  [ELEMENT.ELECTRIC]: "#ffe94d",
 };
 
 // Inner SVG markup (no outer <svg> tag) for each card category's base icon:
@@ -37,6 +45,14 @@ const CATEGORY_ICON_BODY: Record<CardCategory, string> = {
   [CARD_CATEGORY.DEBUFF]: `
     <path d="M12 21 L5 12 H9 V3 H15 V12 H19 Z" fill="#fff"/>
     <ellipse cx="12" cy="22.6" rx="3" ry="1" fill="#fff" opacity="0.6"/>
+  `,
+  // A clawed paw print.
+  [CARD_CATEGORY.MONSTER]: `
+    <ellipse cx="12" cy="15.5" rx="5.2" ry="4.6" fill="#fff"/>
+    <ellipse cx="5.4" cy="9.6" rx="2" ry="2.6" fill="#fff"/>
+    <ellipse cx="9.4" cy="5.6" rx="2" ry="2.7" fill="#fff"/>
+    <ellipse cx="14.6" cy="5.6" rx="2" ry="2.7" fill="#fff"/>
+    <ellipse cx="18.6" cy="9.6" rx="2" ry="2.6" fill="#fff"/>
   `,
 };
 
@@ -76,6 +92,28 @@ const CLASS_ICON_BODY: Record<string, string> = {
     <path d="M12 9 C10.3 12 9.7 13.6 9.7 15.2 C9.7 17.1 10.7 18.5 12 18.5
              C13.3 18.5 14.3 17.1 14.3 15.2 C14.3 14.3 14 13.5 13.4 12.8
              C13.2 13.6 12.7 14.1 12.2 14.2 C12.6 12.9 12.3 11.5 12 9 Z" fill="#ffe066"/>
+  `,
+  // A violet crescent moon with a small star -- Black Mage's dark magic.
+  black_mage: `
+    <path d="M15.5 3 A9 9 0 1 0 21 17.5 A7.2 7.2 0 1 1 15.5 3 Z" fill="#b388ff"/>
+    <path d="M18 5 L18.7 6.8 L20.5 7.5 L18.7 8.2 L18 10 L17.3 8.2 L15.5 7.5 L17.3 6.8 Z" fill="#fff"/>
+  `,
+  // A hammer over an anvil -- Master Craftsman.
+  craftsman: `
+    <path d="M4 17 H20 L18 20 H6 Z" fill="#c9c9c9"/>
+    <rect x="7" y="14.5" width="10" height="2.5" rx="0.8" fill="#9aa0ad"/>
+    <g transform="rotate(-35 12 8)">
+      <rect x="11" y="6" width="2" height="10" rx="1" fill="#c9a27a"/>
+      <rect x="7.5" y="3" width="9" height="4" rx="1" fill="#fff"/>
+    </g>
+  `,
+  // A pale skull -- Necromancer.
+  necromancer: `
+    <path d="M12 3 C7 3 4.5 6.5 4.5 10.5 C4.5 13 5.7 14.6 7.5 15.5 V19 H16.5 V15.5 C18.3 14.6 19.5 13 19.5 10.5 C19.5 6.5 17 3 12 3 Z" fill="#e8eaf0"/>
+    <circle cx="9" cy="10.8" r="2" fill="#1e2230"/>
+    <circle cx="15" cy="10.8" r="2" fill="#1e2230"/>
+    <path d="M12 13 L11 15 H13 Z" fill="#1e2230"/>
+    <path d="M10 19 V17.2 M12 19 V17.2 M14 19 V17.2" stroke="#1e2230" stroke-width="0.9"/>
   `,
 };
 

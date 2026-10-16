@@ -8,7 +8,7 @@ import { DAMAGE_TYPE } from "../src/model/damageTypes.ts";
 import { MODIFIER_MODE } from "../src/model/effects.ts";
 import { allClasses, useLocalCatalog } from "../src/model/catalog.ts";
 import type { ClassDef } from "../src/model/classes.ts";
-import { cardAction, createBattle, isBattleOver, playRound, ultimateAction } from "../src/model/engine.ts";
+import { canPlayCard, cardAction, createBattle, isBattleOver, playRound, restAction, ultimateAction } from "../src/model/engine.ts";
 import { deserializeBattle, serializeBattle } from "../src/model/serialize.ts";
 
 function firstTwoClasses(): [ClassDef, ClassDef] {
@@ -57,12 +57,12 @@ describe("battle engine", () => {
     expect(isBattleOver(battle)).toBe(false);
   });
 
-  it("finishes a game when the player keeps playing its first card", () => {
+  it("finishes a game when the player keeps playing its first affordable card", () => {
     const [a, b] = firstTwoClasses();
     const battle = createBattle(a, b);
     for (let i = 0; i < 500 && !isBattleOver(battle); i++) {
-      const first = battle.player.hand[0];
-      const action = ultimateAction(battle.player) ?? (first ? cardAction(battle.player, first.id) : { kind: "none" });
+      const first = battle.player.hand.find((c) => canPlayCard(battle.player, c));
+      const action = ultimateAction(battle.player) ?? (first ? cardAction(battle.player, first.id) : restAction());
       playRound(battle, action);
     }
     expect(isBattleOver(battle)).toBe(true);
@@ -71,8 +71,8 @@ describe("battle engine", () => {
   it("records each fighter's action for the round recap", () => {
     const [a, b] = firstTwoClasses();
     const battle = createBattle(a, b);
-    const card = battle.player.hand[0];
-    if (!card) throw new Error("expected a starting hand in the test battle");
+    const card = battle.player.hand.find((c) => canPlayCard(battle.player, c));
+    if (!card) throw new Error("expected an affordable card in the starting hand");
     playRound(battle, cardAction(battle.player, card.id));
 
     expect(battle.player.lastAction).toMatchObject({ round: 1, kind: "card", cardId: card.cardId, name: card.name });

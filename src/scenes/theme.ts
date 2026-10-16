@@ -22,6 +22,7 @@ export const COLORS: {
     defend: 0x2f6f8f,
     buff: 0x3a8f5a,
     debuff: 0x6a4a94,
+    monster: 0x8a6a2a,
   },
   ultimate: 0xa8842f,
   ultimateHover: 0xc49b3a,

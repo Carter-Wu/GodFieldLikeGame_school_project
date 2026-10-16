@@ -36,10 +36,24 @@ Vite serves it as-is.
 
 ## How it plays
 
-1. Pick a class (currently **Guardian** — tanky, physical, rewards playing defend cards; or
-   **Pyromancer** — fragile, elemental, faster ultimate charge). The CPU gets the other one.
-2. Each round, you and the CPU pick a card (or ultimate) **at the same time** — the CPU commits
-   to its move without knowing yours, and then both resolve together:
+1. Pick a class: **Guardian** (tanky, physical, guard monsters), **Pyromancer** (fire, burning),
+   **Black Mage** (pays HP / ultimate meter for AP and cards, lifesteal, curses), **Master
+   Craftsman** (weapons that raise ATK, lots of ultimate charge) or **Necromancer** (fills the
+   field with monsters, poison). The CPU gets a different one. Every deck also has the six
+   general cards (Quick Jab, Splash, Spark, Healing Potion, Meditate, Smoke Bomb).
+2. Each round, you and the CPU pick a card (or ultimate, or **Rest**) **at the same time** — the
+   CPU commits to its move without knowing yours, and then both resolve together. Every card
+   costs **AP** (the gem in its corner): you start with 3, gain 2 a round (up to 10), and unspent
+   AP carries over; Rest skips your card for +1 extra AP.
+   - Attacks and ultimates go in **priority** order (fast cards first; a tie is settled by both
+     sides rolling a die). If the first hit knocks the other fighter out, or is an
+     "interrupts" card that lands, the slower attack never happens.
+   - Attacks and monsters can have an **element** (fire / water / electric) and put
+     **statuses** on the target: Burn and Poison deal damage each round, Wet makes electric hit
+     harder (and fire weaker), Acid lowers DEF/ER, Slow lowers priority, Blind halves damage.
+   - **Monster**: summons a monster to your field (3 slots). From the next round on it attacks
+     each round, fastest first: the enemy's monsters (a *guard* monster first), or the enemy
+     fighter once their field is empty. A guard monster also takes attack cards aimed at you.
    - **Attack**: deals damage of a type (physical / magic / element / true). The defender's
      matching resistance stat (DEF / MR / ER — true ignores all of them) reduces it, and so does
      any active defend card of the same type — including one committed this same round.
@@ -53,11 +67,11 @@ Vite serves it as-is.
    Guardian's Bulwark synergy raises DEF further the more defend cards you've played).
 4. Every round your ultimate meter fills by your UR (ultimate regen) stat. Once it's full, "Use
    Ultimate" becomes available as an extra action instead of playing a card.
-5. Reduce the opponent's HP to 0 to win. If a round drops both fighters to 0 HP at once, it's a
-   draw.
+5. Reduce the opponent's HP to 0 to win. If a round drops both fighters to 0 HP at once (e.g.
+   from Burn/Poison), it's a draw.
 
-Card names/numbers and the two example classes are placeholders for wiring the system together,
-not tuned game balance — see the open questions in `docs/DESIGN.md`.
+Card names/numbers are first-pass values for wiring the system together, not tuned game
+balance — see the open questions in `docs/DESIGN.md`.
 
 ## Architecture
 

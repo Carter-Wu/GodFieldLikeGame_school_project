@@ -103,7 +103,8 @@ export class OnlineBattleScene extends BattleScene {
     this.dismissTween = null;
     this.submitting = true;
     this.errorMessage = null;
-    this.pendingPick = action.kind === "card" ? action.card.name : "your ultimate";
+    this.handHint = null;
+    this.pendingPick = action.kind === "card" ? action.card.name : action.kind === "ultimate" ? "your ultimate" : "a rest";
     this.render();
 
     submitAction(this.matchId, action)
@@ -152,7 +153,8 @@ export class OnlineBattleScene extends BattleScene {
       const what = this.pendingPick ?? "your move";
       return `Round ${b.round} — you locked in ${what}. ${b.opponentReady ? "Resolving…" : "Waiting for your opponent…"}`;
     }
-    return `Round ${b.round} — pick a card. ${
+    if (this.handHint) return `Round ${b.round} — ${this.handHint}`;
+    return `Round ${b.round} — pick a card (you have ${b.player.ap} AP) or rest. ${
       b.opponentReady ? "Your opponent has already chosen." : "Your opponent is choosing at the same time."
     }`;
   }

@@ -63,8 +63,9 @@ export function ClassSelect({
         </div>
       </div>
       <p className="shell-subtitle">
-        Class-based card battle: attack / defend / buff / debuff, synergies, and an ultimate meter.
-        Every round both sides pick a card at the same time, then both resolve together.
+        Class-based card battle: attack / defend / buff / debuff / monster cards, synergies, and an ultimate meter.
+        Every round both sides pick a card at the same time and pay its AP cost, then both resolve together
+        -- the higher priority strikes first, ties go to the dice.
       </p>
       <h2 className="shell-heading">Choose your class</h2>
       <div className="class-grid">

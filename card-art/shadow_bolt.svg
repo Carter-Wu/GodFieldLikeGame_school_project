@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 480 360">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="75%">
+      <stop offset="0" stop-color="#b5423a"/>
+      <stop offset="1" stop-color="#2a0b09"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffb199" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffb199" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
+      <stop offset="0.55" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.6"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f6fa"/>
+      <stop offset="0.55" stop-color="#b8c0cd"/>
+      <stop offset="1" stop-color="#7d8697"/>
+    </linearGradient>
+    <linearGradient id="fireOuter" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ff4d1a"/>
+      <stop offset="0.6" stop-color="#ff9d4d"/>
+      <stop offset="1" stop-color="#ffd23f"/>
+    </linearGradient>
+    <linearGradient id="fireInner" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ffe066"/>
+      <stop offset="1" stop-color="#fffbe6"/>
+    </linearGradient>
+    <linearGradient id="fireShield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd29a"/>
+      <stop offset="1" stop-color="#c7612a"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="360" fill="url(#bg)"/>
+  <circle cx="240" cy="180" r="170" fill="url(#halo)"/>
+  <g opacity="0.12" stroke="#ffffff" stroke-width="2" fill="none">
+    <circle cx="240" cy="180" r="120"/><circle cx="240" cy="180" r="150"/>
+  </g>
+  <polygon points="360.0,180.0 289.9,200.7 324.9,264.9 260.7,229.9 240.0,300.0 219.3,229.9 155.1,264.9 190.1,200.7 120.0,180.0 190.1,159.3 155.1,95.1 219.3,130.1 240.0,60.0 260.7,130.1 324.9,95.1 289.9,159.3" fill="#ffe066" stroke="#1b1f2c" stroke-width="4" stroke-linejoin="round"/><polygon points="300.0,180.0 264.9,190.3 282.4,222.4 250.3,204.9 240.0,240.0 229.7,204.9 197.6,222.4 215.1,190.3 180.0,180.0 215.1,169.7 197.6,137.6 229.7,155.1 240.0,120.0 250.3,155.1 282.4,137.6 264.9,169.7" fill="#ffffff" stroke="#1b1f2c" stroke-width="4" stroke-linejoin="round"/>
+  <rect width="480" height="360" fill="url(#vignette)"/>
+</svg>
