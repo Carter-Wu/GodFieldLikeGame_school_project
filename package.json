@@ -14,7 +14,9 @@
     "catalog:sql": "node scripts/catalog-sql.ts",
     "cards:art": "node scripts/card-art.ts",
     "backgrounds": "node scripts/backgrounds.ts",
-    "server": "tsx server/index.ts"
+    "server": "tsx server/index.ts",
+    "server:local": "tsx --env-file=.env.server.local server/index.ts",
+    "dev:all": "npm run server:local & npm run dev:sandbox"
   },
   "dependencies": {
     "@colyseus/core": "^0.18.19",
