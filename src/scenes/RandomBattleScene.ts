@@ -36,6 +36,8 @@ export class RandomBattleScene extends BattleScene {
   pendingPick: string | null = null;
   errorMessage: string | null = null;
   opponentGone = false;
+  // What was planned when we locked in, to hand back if the server rejects it.
+  planned: Pick<RandomBattleScene, "staged" | "stagedUltimate" | "stagedTargets" | "orders"> | null = null;
 
   constructor() {
     super("RandomBattleScene");
@@ -53,7 +55,10 @@ export class RandomBattleScene extends BattleScene {
       match.onError((message) => {
         this.errorMessage = message;
         this.pendingPick = null;
-        this.pendingPlay = null;
+        // The round never resolved: give the picked cards back to plan with.
+        this.pendingTurn = null;
+        if (this.planned) Object.assign(this, this.planned);
+        this.planned = null;
         this.render();
       }),
       match.onClose(() => {
@@ -92,19 +97,17 @@ export class RandomBattleScene extends BattleScene {
   }
 
   override commitAction(action: Action): void {
-    this.previewedCardId = null;
-    this.previewedView = null;
-    this.dismissTween?.stop();
-    this.dismissTween = null;
+    this.planned = { staged: this.staged, stagedUltimate: this.stagedUltimate, stagedTargets: this.stagedTargets, orders: this.orders };
+    this.clearPlanning();
+    this.pendingTurn = { cards: action.cards, ultimate: action.ultimate, round: this.battle.round };
     this.errorMessage = null;
-    this.pendingPick = action.kind === "card" ? action.card.name : "your ultimate";
+    const n = action.cards.length + (action.ultimate ? 1 : 0) + (action.orders?.length ?? 0);
+    this.pendingPick = n === 0 ? "a pass" : n === 1 ? "1 play" : `${n} plays`;
     this.match.pick(action);
     this.render();
   }
 
   override async onLeave(): Promise<void> {
-    this.flightSeq++;
-    this.finishFlight();
     if (!isBattleOver(this.battle) && !this.match.closed) {
       const leave = await confirmDialog({
         title: "Leave this match?",
@@ -131,7 +134,8 @@ export class RandomBattleScene extends BattleScene {
       const what = this.pendingPick ?? "your move";
       return `Round ${b.round} — you locked in ${what}. ${b.opponentReady ? "Resolving…" : "Waiting for your opponent…"}`;
     }
-    return `Round ${b.round} — pick a card. ${
+    if (this.handHint) return `Round ${b.round} — ${this.handHint}`;
+    return `Round ${b.round} — ${this.plannedAp()}/${b.player.maxAp} AP left. Play cards, then End turn. ${
       b.opponentReady ? "Your opponent has already chosen." : "Your opponent is choosing at the same time."
     }`;
   }
@@ -142,9 +146,10 @@ export class RandomBattleScene extends BattleScene {
     const before = this.currentHp();
     this.battle = toBattleView(view);
     if (!this.battle.myReady) this.pendingPick = null;
+    if (this.battle.round > previous.round) this.planned = null;
 
     // Replay the round if this update is the one that resolved it.
-    const resolvedRound = this.battle.player.lastAction?.round;
+    const resolvedRound = this.battle.player.lastTurn?.round;
     const justResolved =
       resolvedRound === previous.round &&
       (this.battle.round > previous.round || (isBattleOver(this.battle) && !isBattleOver(previous)));

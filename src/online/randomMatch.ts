@@ -3,7 +3,7 @@
 // this wrapper keeps the latest view and hands it to whoever is listening.
 import { Client, type Room } from "@colyseus/sdk";
 import { supabase } from "./supabaseClient.ts";
-import type { Action, ClientAction } from "../model/engine.ts";
+import { toClientAction, type Action } from "../model/engine.ts";
 import type { RandomMatchView } from "./randomMatchView.ts";
 
 export type { RandomMatchView };
@@ -47,10 +47,9 @@ export class RandomMatch {
     return () => this.closeListeners.delete(listener);
   }
 
-  // Only the card id goes over the wire; the server re-checks it.
+  // This turn's plays; only card ids go over the wire, the server re-checks them.
   pick(action: Action): void {
-    const wire: ClientAction = action.kind === "card" ? { kind: "card", cardId: action.card.id } : { kind: "ultimate" };
-    this.room.send("pick", wire);
+    this.room.send("pick", toClientAction(action));
   }
 
   leave(): void {

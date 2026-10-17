@@ -2,7 +2,7 @@
 // (joinOrCreate), so the matchmaking itself is built in. The game rules are
 // the same src/model/* files the browser and the `game` Edge Function use.
 import { Room, type Client } from "@colyseus/core";
-import { createBattle, cardAction, ultimateAction, resolveRound, isBattleOver } from "../src/model/engine.ts";
+import { createBattle, fromClientAction, resolveRound, isBattleOver } from "../src/model/engine.ts";
 import type { Action, Battle, ClientAction, Fighter } from "../src/model/engine.ts";
 import { findClassById } from "../src/model/catalog.ts";
 import { buildDeckFromList, validateDeckList, type DeckListEntry } from "../src/model/decks.ts";
@@ -75,8 +75,10 @@ export class BattleRoom extends Room {
       const seat = this.seatOf(client);
       if (!this.battle || !seat || seat.pick) return;
       const fighter = this.fighterOf(seat);
-      const picked =
-        action?.kind === "card" ? cardAction(fighter, Number(action.cardId)) : action?.kind === "ultimate" ? ultimateAction(fighter) : null;
+      const opponent = fighter === this.battle.player ? this.battle.cpu : this.battle.player;
+      // The whole turn (cards, ultimate, targets, monster orders), re-checked
+      // against the server's own copy of the battle.
+      const picked = fromClientAction(fighter, opponent, action);
       if (!picked) return client.send("error", "You can't play that right now");
       seat.pick = picked;
 
