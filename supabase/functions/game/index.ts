@@ -13,14 +13,17 @@
 //       deckId: one of the caller's own `decks` rows for that class;
 //       omitted/null = the class's starter deck.
 //   { op: "submit", matchId, action }    -> { resolved }
-//       action: { kind: "card", cardId } | { kind: "ultimate" }
+//       action: { cardIds: [hand card id, ...], ultimate: boolean,
+//                 targets?: { [cardId]: target }, orders?: [monster order] }
+//       -- the whole turn, in play order (empty = pass); see ClientAction
+//       in src/model/engine.ts
 //   { op: "leave", matchId }             -> {}
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
   createBattle,
-  cardAction,
-  ultimateAction,
+  fromClientAction,
+  toClientAction,
   resolveRound,
   isBattleOver,
   type Action,
@@ -128,12 +131,11 @@ async function loadDeckList(userId: string, classDef: ClassDef, deckId: unknown)
   return deck.cards as DeckListEntry[];
 }
 
-// Client action -> engine action for this fighter, or null if the fighter
-// can't actually play it (card not in hand, ultimate not charged).
-function toEngineAction(fighter: Fighter, action: ClientAction | null | undefined): Action | null {
-  if (action?.kind === "card") return cardAction(fighter, Number(action.cardId));
-  if (action?.kind === "ultimate") return ultimateAction(fighter);
-  return null;
+// Client turn -> engine turn for this fighter, or null if the fighter can't
+// actually play it (a card not in hand, not enough AP, ultimate not charged,
+// a monster that can't act, a target that isn't allowed).
+function toEngineAction(fighter: Fighter, opponent: Fighter, action: ClientAction | null | undefined): Action | null {
+  return fromClientAction(fighter, opponent, action);
 }
 
 // --- ops -----------------------------------------------------------------
@@ -222,9 +224,10 @@ async function submitAction(userId: string, body: { matchId?: unknown; action?: 
   const secrets = check(await admin.from("match_secrets").select("battle, round").eq("match_id", matchId).single());
   const battle = deserializeBattle(secrets.battle);
   const fighter = side === "p1" ? battle.player : battle.cpu;
-  const action = body.action as ClientAction | undefined;
-  if (!toEngineAction(fighter, action)) throw new HttpError(400, "You can't play that right now");
-  const stored = action.kind === "card" ? { kind: "card", cardId: Number(action.cardId) } : { kind: "ultimate" };
+  const opponent = side === "p1" ? battle.cpu : battle.player;
+  const planned = toEngineAction(fighter, opponent, body.action as ClientAction | undefined);
+  if (!planned) throw new HttpError(400, "You can't play that right now");
+  const stored = toClientAction(planned); // normalized: ids, targets and orders only
 
   // Flag "ready" BEFORE storing the move: whichever request ends up resolving
   // the round only does so after seeing this move stored, so its reset of
@@ -271,8 +274,8 @@ interface SecretsRow {
 
 async function resolveMatchRound(match: MatchRow, row: SecretsRow): Promise<void> {
   const battle = deserializeBattle(row.battle);
-  const p1Action = toEngineAction(battle.player, row.p1_action);
-  const p2Action = toEngineAction(battle.cpu, row.p2_action);
+  const p1Action = toEngineAction(battle.player, battle.cpu, row.p1_action);
+  const p2Action = toEngineAction(battle.cpu, battle.player, row.p2_action);
   if (!p1Action || !p2Action) return; // stale row -- the other resolver already cleared it
   resolveRound(battle, p1Action, p2Action);
 

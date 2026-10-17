@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 480 360">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="75%">
+      <stop offset="0" stop-color="#8a6a2a"/>
+      <stop offset="1" stop-color="#1f1606"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffe0a0" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffe0a0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
+      <stop offset="0.55" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.6"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f6fa"/>
+      <stop offset="0.55" stop-color="#b8c0cd"/>
+      <stop offset="1" stop-color="#7d8697"/>
+    </linearGradient>
+    <linearGradient id="fireOuter" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ff4d1a"/>
+      <stop offset="0.6" stop-color="#ff9d4d"/>
+      <stop offset="1" stop-color="#ffd23f"/>
+    </linearGradient>
+    <linearGradient id="fireInner" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ffe066"/>
+      <stop offset="1" stop-color="#fffbe6"/>
+    </linearGradient>
+    <linearGradient id="fireShield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd29a"/>
+      <stop offset="1" stop-color="#c7612a"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="360" fill="url(#bg)"/>
+  <circle cx="240" cy="180" r="170" fill="url(#halo)"/>
+  <g opacity="0.12" stroke="#ffffff" stroke-width="2" fill="none">
+    <circle cx="240" cy="180" r="120"/><circle cx="240" cy="180" r="150"/>
+  </g>
+  
+    <g fill="#ffe0a0"><ellipse cx="200" cy="150" rx="22" ry="12"/><ellipse cx="280" cy="150" rx="22" ry="12"/></g>
+    <g fill="#1b1f2c"><ellipse cx="200" cy="150" rx="6" ry="11"/><ellipse cx="280" cy="150" rx="6" ry="11"/></g>
+    <g fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" opacity="0.9">
+      <path d="M150 70 Q210 180 170 300"/><path d="M230 60 Q290 180 250 310"/><path d="M310 70 Q370 180 330 300"/>
+    </g>
+    <g fill="none" stroke="#1b1f2c" stroke-width="5" stroke-linecap="round" opacity="0.5">
+      <path d="M150 70 Q210 180 170 300"/><path d="M230 60 Q290 180 250 310"/><path d="M310 70 Q370 180 330 300"/>
+    </g>
+  <rect width="480" height="360" fill="url(#vignette)"/>
+</svg>

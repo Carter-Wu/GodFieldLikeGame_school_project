@@ -38,6 +38,7 @@ const PALETTE: Record<string, Palette> = {
   defend: { dark: "#081a25", light: "#2f6f8f", glow: "#a8e1ff" },
   buff: { dark: "#08200f", light: "#3a8f5a", glow: "#b6ffcf" },
   debuff: { dark: "#150b24", light: "#6a4a94", glow: "#e0c2ff" },
+  monster: { dark: "#1f1606", light: "#8a6a2a", glow: "#ffe0a0" },
 };
 
 // --- shared shapes -------------------------------------------------------
@@ -221,6 +222,16 @@ const CATEGORY_EMBLEM: Record<string, () => string> = {
   defend: () => shield(240, 180, 1.3),
   buff: () => `${arrow(240, 190, "up", 2)}${sparks([[120, 90, 8], [360, 110, 7], [330, 280, 6]], "#ffffff")}`,
   debuff: () => `${arrow(240, 170, "down", 2, "#e0c2ff")}`,
+  // Three claw slashes over a glowing pair of eyes.
+  monster: () => `
+    <g fill="#ffe0a0"><ellipse cx="200" cy="150" rx="22" ry="12"/><ellipse cx="280" cy="150" rx="22" ry="12"/></g>
+    <g fill="${INK}"><ellipse cx="200" cy="150" rx="6" ry="11"/><ellipse cx="280" cy="150" rx="6" ry="11"/></g>
+    <g fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" opacity="0.9">
+      <path d="M150 70 Q210 180 170 300"/><path d="M230 60 Q290 180 250 310"/><path d="M310 70 Q370 180 330 300"/>
+    </g>
+    <g fill="none" stroke="${INK}" stroke-width="5" stroke-linecap="round" opacity="0.5">
+      <path d="M150 70 Q210 180 170 300"/><path d="M230 60 Q290 180 250 310"/><path d="M310 70 Q370 180 330 300"/>
+    </g>`,
 };
 
 const FALLBACK_PALETTE: Palette = { dark: "#1b1f2c", light: "#4a5573", glow: "#e8eaf0" };

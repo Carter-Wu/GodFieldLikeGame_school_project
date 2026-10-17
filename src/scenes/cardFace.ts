@@ -4,19 +4,57 @@
 
 import type Phaser from "phaser";
 import { COLORS, TEXT, FONT_FAMILY, roundedRect } from "./theme.ts";
-import { CARD_ICON_KEY, ULTIMATE_ICON_KEY, damageAccentColor } from "../phaserIcons.ts";
+import { CARD_ICON_KEY, ULTIMATE_ICON_KEY, damageAccentColor, elementAccentColor } from "../phaserIcons.ts";
 import { loadedArtKey } from "../cardArt.ts";
-import type { DamageType } from "../model/damageTypes.ts";
+import { cardCost, type Card } from "../model/cardTypes.ts";
+import { describeCard, type PlayRecord } from "../model/engine.ts";
+import type { DamageType, Element } from "../model/damageTypes.ts";
+
+export const AP_GEM_COLOR = 0x2f7fd0;
+export const AP_SHORT_COLOR = 0xc0392b; // a cost gem you can't pay right now
 
 // card: { cardId, category, name, damageType, description } -- a hand card
-// instance plus its describeCard() text, or a fighter's lastAction. The
+// instance plus its describeCard() text, or one of a fighter's plays. The
 // category "ultimate" draws the gold ultimate card.
 export interface CardFaceData {
   cardId?: string | null;
   category: string;
   name?: string | null;
   damageType?: DamageType | null;
+  element?: Element | null;
+  cost?: number | null; // AP cost, drawn as a gem in the corner
+  costShort?: boolean; // not enough AP left for it: the gem turns red
   description?: string | null;
+}
+
+// Face data for a card instance (hand, arena slot, commit flight).
+export function cardFaceData(card: Card): CardFaceData {
+  return {
+    cardId: card.cardId,
+    category: card.category,
+    name: card.name,
+    damageType: "damageType" in card ? card.damageType : null,
+    element: card.element ?? null,
+    cost: cardCost(card),
+    description: describeCard(card),
+  };
+}
+
+// Face data for one resolved play (from a fighter's lastTurn): the card, or
+// the gold ultimate card.
+export function actionFace(action: PlayRecord, ultimateName: string): CardFaceData {
+  if (action.kind === "ultimate") {
+    return { category: "ultimate", name: ultimateName, description: `${action.damage ?? 0} damage` };
+  }
+  return {
+    cardId: action.cardId,
+    category: action.category ?? "",
+    name: action.name,
+    damageType: action.damageType,
+    element: action.element ?? null,
+    cost: action.cost ?? null,
+    description: action.description,
+  };
 }
 
 export function drawCardFace(
@@ -53,12 +91,33 @@ export function drawCardFace(
     container.add(scene.add.image(pad + artW / 2, pad + artH / 2, iconKey).setDisplaySize(size, size));
   }
 
-  const accent = damageAccentColor(card.damageType ?? undefined);
+  const accent = elementAccentColor(card.element) ?? damageAccentColor(card.damageType ?? undefined);
   if (accent !== null) {
     container.add(scene.add.circle(pad + artW - 9 * scale, pad + 9 * scale, 5 * scale, accent).setStrokeStyle(1.5, COLORS.background));
   }
 
   const px = (n: number): string => `${Math.round(n * scale)}px`;
+
+  // AP cost gem, top-left over the art -- red when there isn't enough AP
+  // left this turn to pay for it.
+  if (card.cost !== null && card.cost !== undefined && !isUltimate) {
+    const gx = pad + 13 * scale;
+    const gy = pad + 13 * scale;
+    const color = card.costShort ? AP_SHORT_COLOR : AP_GEM_COLOR;
+    container.add(scene.add.circle(gx, gy, 13 * scale, color).setStrokeStyle(2.5 * scale, card.costShort ? 0xffd0c8 : 0xbfe0ff));
+    container.add(
+      scene.add
+        .text(gx, gy, String(card.cost), {
+          fontFamily: FONT_FAMILY,
+          fontSize: px(16),
+          fontStyle: "900",
+          color: TEXT.white,
+          stroke: "#000000",
+          strokeThickness: 3 * scale,
+        })
+        .setOrigin(0.5)
+    );
+  }
   let y = pad + artH + 4 * scale;
   container.add(
     scene.add

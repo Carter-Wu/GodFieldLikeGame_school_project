@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 480 360">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="75%">
+      <stop offset="0" stop-color="#6a4a94"/>
+      <stop offset="1" stop-color="#150b24"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#e0c2ff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#e0c2ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
+      <stop offset="0.55" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.6"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f6fa"/>
+      <stop offset="0.55" stop-color="#b8c0cd"/>
+      <stop offset="1" stop-color="#7d8697"/>
+    </linearGradient>
+    <linearGradient id="fireOuter" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ff4d1a"/>
+      <stop offset="0.6" stop-color="#ff9d4d"/>
+      <stop offset="1" stop-color="#ffd23f"/>
+    </linearGradient>
+    <linearGradient id="fireInner" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ffe066"/>
+      <stop offset="1" stop-color="#fffbe6"/>
+    </linearGradient>
+    <linearGradient id="fireShield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd29a"/>
+      <stop offset="1" stop-color="#c7612a"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="360" fill="url(#bg)"/>
+  <circle cx="240" cy="180" r="170" fill="url(#halo)"/>
+  <g opacity="0.12" stroke="#ffffff" stroke-width="2" fill="none">
+    <circle cx="240" cy="180" r="120"/><circle cx="240" cy="180" r="150"/>
+  </g>
+  <g transform="translate(240 170) rotate(180) scale(2)">
+    <path d="M0 -50 L42 0 H18 V50 H-18 V0 H-42 Z" fill="#e0c2ff" stroke="#1b1f2c" stroke-width="6" stroke-linejoin="round"/>
+  </g>
+  <rect width="480" height="360" fill="url(#vignette)"/>
+</svg>

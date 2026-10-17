@@ -7,7 +7,7 @@
 // per browser tab -- see supabaseClient.ts.
 
 import { deserializeFighter, type SerializedFighter } from "../model/serialize.ts";
-import type { Action, Battle, ClientAction, Fighter } from "../model/engine.ts";
+import { toClientAction, type Action, type Battle, type ClientAction, type Fighter } from "../model/engine.ts";
 import type { Card } from "../model/cardTypes.ts";
 import { supabase, onlineAvailable } from "./supabaseClient.ts";
 
@@ -89,11 +89,11 @@ export const joinMatch = (code: string, classId: string, deckId: string | null):
 export const leaveMatch = (matchId: string): Promise<Record<string, never>> =>
   callGame({ op: "leave", matchId });
 
-// action: an engine action from cardAction()/ultimateAction(); only the card
-// id goes over the wire -- the server re-checks it against its own copy.
+// action: this turn's cards (+ ultimate) from planAction(); only the card ids
+// go over the wire -- the server re-checks the whole turn against its own
+// copy.
 export function submitAction(matchId: string, action: Action): Promise<{ resolved: boolean }> {
-  const wire: ClientAction =
-    action.kind === "card" ? { kind: "card", cardId: action.card.id } : { kind: "ultimate" };
+  const wire: ClientAction = toClientAction(action);
   return callGame({ op: "submit", matchId, action: wire });
 }
 

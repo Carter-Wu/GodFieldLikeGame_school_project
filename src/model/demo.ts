@@ -77,7 +77,7 @@ check("a physical defend card does not block true damage", dmgTrueVsPhysicalDefe
 
 // 8. Decks are built from the catalog's class_deck_cards rows.
 const guardianDeck = buildDeckForClass(exampleClassGuardian);
-check("Guardian's catalog deck has 18 cards", guardianDeck.length === 18);
+check("Guardian's catalog deck has 24 cards", guardianDeck.length === 24);
 check(
   "catalog card instances carry their catalog id and props",
   guardianDeck.some((c) => c.cardId === "iron_wall" && c.category === "defend" && (c as { amount?: number }).amount === 5)

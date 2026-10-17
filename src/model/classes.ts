@@ -12,6 +12,10 @@ export interface Ultimate {
   description: string;
   cost: number;
   damage?: number;
+  // Optional effects on the user when it fires (Master Craftsman's ATK
+  // boost, Necromancer's summons), lasting `duration` rounds.
+  effects?: Effect[];
+  duration?: number;
 }
 
 export interface ClassDef {

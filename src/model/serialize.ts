@@ -13,7 +13,7 @@
 // receives the other's cards.
 
 import { findClassById } from "./catalog.ts";
-import type { Battle, Fighter, LastAction } from "./engine.ts";
+import { AP_RULES, type Battle, type Fighter, type TurnRecord } from "./engine.ts";
 import type { Card } from "./cardTypes.ts";
 
 export interface SerializedFighter {
@@ -21,6 +21,10 @@ export interface SerializedFighter {
   label: string | null;
   hp: number;
   maxHp: number;
+  ap?: number;
+  maxAp?: number;
+  field?: Fighter["field"];
+  statuses?: Fighter["statuses"];
   ultimateMeter: number;
   cardsPlayedByCategory: Record<string, number>;
   activeDefends: Fighter["activeDefends"];
@@ -29,7 +33,7 @@ export interface SerializedFighter {
   disabledSynergyTimers: Record<string, number>;
   handCount: number;
   deckCount: number;
-  lastAction: LastAction | null;
+  lastTurn: TurnRecord | null;
   hand?: Card[];
   deck?: Card[];
   discard?: Card[];
@@ -53,6 +57,10 @@ export function serializeFighter(
     label: fighter.label ?? null,
     hp: fighter.hp,
     maxHp: fighter.maxHp,
+    ap: fighter.ap,
+    maxAp: fighter.maxAp,
+    field: fighter.field,
+    statuses: fighter.statuses,
     ultimateMeter: fighter.ultimateMeter,
     cardsPlayedByCategory: fighter.cardsPlayedByCategory,
     activeDefends: fighter.activeDefends,
@@ -61,7 +69,7 @@ export function serializeFighter(
     disabledSynergyTimers: fighter.disabledSynergyTimers,
     handCount: fighter.hand.length,
     deckCount: fighter.deck.length,
-    lastAction: fighter.lastAction ?? null,
+    lastTurn: fighter.lastTurn ?? null,
   };
   if (includePrivate) {
     data.hand = fighter.hand;
@@ -81,16 +89,23 @@ export function deserializeFighter(data: SerializedFighter, hand: Card[] = data.
     label: data.label ?? null,
     hp: data.hp,
     maxHp: data.maxHp,
+    // Missing on battles stored before AP / monsters / statuses existed.
+    ap: data.ap ?? AP_RULES.start,
+    maxAp: data.maxAp ?? AP_RULES.start,
     deck: data.deck ?? [],
     discard: data.discard ?? [],
     hand,
+    // Monsters stored before orders existed: 1 AP attacks, no ability, ready.
+    field: (data.field ?? []).map((m) => ({ ...m, attackCost: m.attackCost ?? 1, ability: m.ability ?? null, ready: m.ready ?? true })),
+    statuses: data.statuses ?? {},
     ultimateMeter: data.ultimateMeter,
     cardsPlayedByCategory: data.cardsPlayedByCategory,
     activeDefends: data.activeDefends,
     tempModifiers: data.tempModifiers,
     disabledSynergies: new Set(data.disabledSynergies),
     disabledSynergyTimers: data.disabledSynergyTimers,
-    lastAction: data.lastAction ?? null,
+    // A battle stored before multi-card turns has `lastAction` instead -- dropped.
+    lastTurn: data.lastTurn ?? null,
     // Only meaningful on a public fighter, whose hand/deck aren't sent.
     handCount: data.handCount ?? hand.length,
   };

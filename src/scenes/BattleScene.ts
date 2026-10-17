@@ -12,26 +12,38 @@ import {
   computeCurrentStats,
   canUseUltimate,
   createBattle,
-  cardAction,
-  ultimateAction,
+  checkPlan,
+  planAction,
+  canPlayCard,
+  unplayableReason,
+  cardNeedsTarget,
+  orderNeedsTarget,
+  orderCost,
+  targetProblem,
+  describeAbility,
   playRound,
-  describeCard,
   describeEffect,
   isBattleOver,
   fighterName,
+  FIELD_SIZE,
+  AP_RULES,
+  STATUS_LABEL,
   type Action,
   type Battle,
   type Fighter,
-  type LastAction,
+  type TurnRecord,
+  type Monster,
+  type MonsterOrder,
+  type Target,
 } from "../model/engine.ts";
-import { EFFECT_KIND, MODIFIER_MODE } from "../model/effects.ts";
+import { EFFECT_KIND, MODIFIER_MODE, STATUS, type StatusId } from "../model/effects.ts";
 import { RESIST_STAT } from "../model/damageTypes.ts";
 import type { StatKey } from "../model/stats.ts";
-import type { Card, DefendCard } from "../model/cardTypes.ts";
+import { cardCost, type Card, type DefendCard } from "../model/cardTypes.ts";
 import type { ClassDef } from "../model/classes.ts";
 import { allCards, allClasses } from "../model/catalog.ts";
 import { preloadIcons, classIconKey, ULTIMATE_ICON_KEY, CARD_ICON_KEY } from "../phaserIcons.ts";
-import { loadCardArt } from "../cardArt.ts";
+import { loadCardArt, loadedArtKey } from "../cardArt.ts";
 import { isMuted, playSfx, setMuted } from "../fx/sound.ts";
 import {
   COLORS,
@@ -48,8 +60,8 @@ import {
   useRenderScale,
   type Button,
 } from "./theme.ts";
-import { drawCardFace } from "./cardFace.ts";
-import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RecapSlotView, type RoundRecapRun } from "./roundRecap.ts";
+import { AP_GEM_COLOR, AP_SHORT_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
+import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
 // 1280x720 board layout: CPU strip top-center, player strip lower-center,
 // portraits in the left column, battle log in the right column, hand along
@@ -77,37 +89,70 @@ const BUTTON_X = 24;
 const BUTTON_W = 176;
 const BUTTON_H = 40;
 const ULTIMATE_BUTTON_Y = 296;
-const LEAVE_BUTTON_Y = 346;
+const END_TURN_BUTTON_Y = 346;
+const LEAVE_BUTTON_Y = 396;
 
 const HAND_Y = 548;
 const CARD_W = 112;
 const CARD_H = 160;
 
-// Fanned bottom hand + preview-then-commit: cards overlap horizontally; hover
-// lifts slightly (mouse only); click/tap pops the card into a full preview
-// (raised, enlarged, gold ring) and a second click/tap commits it.
+// The hand (docs "Card Position"): cards fanned out from the bottom center;
+// hover expands a card; a click moves it to the middle of the screen in full
+// view (at most a third of the screen tall, with space above and below);
+// clicking it again plays it onto your side of the arena, clicking anywhere
+// else puts it back.
 const FAN_OVERLAP = 44;
-const HOVER_LIFT = 12;
-const POP_SCALE = 1.4;
-const POP_LIFT = 104;
-const PREVIEW_RING = 0xc49b3a;
 
-// Middle arena slots holding each side's last resolved card (Phase 3). Fed
-// solely by post-resolution lastAction -- vacant pre-first-commit -- so the CPU slot
-// can never leak a face before reveal.
+// The big AP gauge, left of the hand (under the player strip): AP left this
+// turn as a number and as gems -- bright = still yours, pulsing = about to
+// be spent on the card you're looking at, dark = spent on this turn's picks,
+// faint = not unlocked yet (max AP grows by one every round).
+const AP_PANEL = { x: 240, y: 550, w: 168, h: 158 };
+const AP_PIP_R = 11;
+const AP_PIP_STEP = 29;
+const AP_LIVE = 0x4fb3ff;
+const AP_SPENT = 0x1d3550;
+const HOVER_LIFT = 14;
+const HOVER_SCALE = 1.12;
+const PREVIEW_SCALE = 1.45; // 160px card -> 232px, under a third of 720
+const PREVIEW_RING = 0xc49b3a;
+const STAGE_SCALE = 0.6; // picked cards, shrunk onto the player's slot
+
+// Middle arena slots: the player's holds the cards picked this turn; once
+// the turn is sent, the opponent's shows a face-down card until the recap.
 const SLOT_W = 150;
 const SLOT_H = 190;
 const SLOT_Y = 195;
 const SLOT_GAP = 20;
 const SLOT_TOTAL_W = SLOT_W * 2 + SLOT_GAP;
 
-// Commit flight: hand card tosses into its slot before resolution (~260ms).
-const FLIGHT_DURATION = 260;
+// Monster fields, flanking the arena slots on the side of their owner's
+// slot: the CPU's to the left, the player's to the right.
+const FIELD_W = 228;
+const FIELD_Y = 206;
+const FIELD_H = 176;
+const CPU_FIELD_X = STRIP_X;
+const PLAYER_FIELD_X = STRIP_X + STRIP_W - FIELD_W;
+const MONSTER_W = 72;
+const MONSTER_H = 136;
+const MONSTER_GAP = (FIELD_W - MONSTER_W * FIELD_SIZE) / (FIELD_SIZE - 1);
+const MONSTER_GUARD = 0x6ec6ff;
 
-export interface PendingPlay {
-  playerCard: Card | null; // committed card (null for ultimates: nothing to fly)
-  round: number; // battle.round at commit; validates the CPU face source
-  cpuRevealed: boolean; // flip done -- rebuilds may draw the face, not the back
+const STATUS_COLOR: Record<StatusId, number> = {
+  [STATUS.BURNING]: 0xc4511d,
+  [STATUS.POISON]: 0x4f8a2e,
+  [STATUS.WET]: 0x2f6fb0,
+  [STATUS.ACID]: 0x8a9a1e,
+  [STATUS.SLOWED]: 0x56658a,
+  [STATUS.BLIND]: 0x4a4f60,
+};
+
+// A turn that's been sent: the slots keep showing it (and a face-down card
+// for the opponent) until the round's recap has played.
+export interface PendingTurn {
+  cards: Card[];
+  ultimate: boolean;
+  round: number; // battle.round at commit
 }
 
 const LOG_X = 1072;
@@ -127,6 +172,7 @@ const STAT_CHIPS: Array<{ key: StatKey; label: string; color: number }> = [
   { key: "mr", label: "MR", color: 0xb388ff },
   { key: "er", label: "ER", color: 0xff9d4d },
   { key: "ur", label: "UR", color: 0xffe066 },
+  { key: "atk", label: "ATK", color: 0xff6b5f },
 ];
 
 const CHIP_COLOR = {
@@ -225,24 +271,25 @@ export class BattleScene extends Phaser.Scene {
   playerPortrait!: Phaser.GameObjects.Container;
   statusText!: Phaser.GameObjects.Text;
   handContainer!: Phaser.GameObjects.Container;
+  apContainer!: Phaser.GameObjects.Container; // the AP gauge beside the hand
   slotsContainer!: Phaser.GameObjects.Container;
+  fieldContainer!: Phaser.GameObjects.Container;
   ultimateButton!: Button;
-  previewedCardId: number | null = null; // card id held in full preview (click/tap once; commits on second)
-  animatePreview = false; // tween the pop-in only on the selecting render, never on rebuilds
-  previewedView: Phaser.GameObjects.Container | null = null; // live popped container, for glide-back dismiss
-  previewedSlotX = 0; // its slot x, the dismiss target
-  dismissTween: Phaser.Tweens.Tween | null = null; // in-flight glide-back, killed on any rebuild
-  flightLayer!: Phaser.GameObjects.Container; // commit-flight clones; never rebuilt by render()
-  pendingPlay: PendingPlay | null = null; // committed round in flight: slots show it until the recap fades it
-  slotViews: Record<"player" | "cpu", { card: Phaser.GameObjects.Container | null; isBack: boolean }> = {
-    player: { card: null, isBack: false },
-    cpu: { card: null, isBack: false },
-  };
-  flightSeq = 0; // invalidates stale flight continuations (leave/restart mid-flight)
-  flightTween: Phaser.Tweens.Tween | null = null;
-  flightView: Phaser.GameObjects.Container | null = null;
-  flightPromise: Promise<void> | null = null;
-  flightResolve: (() => void) | null = null;
+  endTurnButton!: Button;
+  handHint: string | null = null; // why the card just clicked can't be played
+  // This turn's plan, built up card by card: confirmed cards move from the
+  // hand onto the player's arena slot (only this client sees them) until
+  // "End turn" sends the whole turn.
+  staged: Card[] = [];
+  stagedUltimate = false;
+  stagedTargets: Record<number, Target> = {}; // attack card id -> who it's aimed at
+  orders: MonsterOrder[] = []; // this turn's orders for your monsters
+  // Picking a target: for an attack card being played, or a monster order.
+  targeting: { kind: "card"; card: Card } | { kind: "order"; uid: number; use: MonsterOrder["use"] } | null = null;
+  monsterMenuUid: number | null = null; // your monster whose command menu is open
+  previewedCardId: number | null = null; // hand card shown big in the middle, waiting for a confirm click
+  previewLayer!: Phaser.GameObjects.Container; // the center preview, above everything else
+  pendingTurn: PendingTurn | null = null; // committed turn being resolved/replayed
   logScrollIndex = 0; // pixel offset into the measured log content
   logMaxScrollIndex = 0; // max pixel offset (content height - box height)
   logTotalHeight = 0; // measured content height, set by renderLog
@@ -325,52 +372,39 @@ export class BattleScene extends Phaser.Scene {
     return !isBattleOver(this.battle) && !this.recapPlaying;
   }
 
+  // Send this turn. vs-CPU resolves it right away; OnlineBattleScene
+  // overrides this to send it to the server.
   commitAction(action: Action): void {
-    this.previewedCardId = null;
-    this.animatePreview = false;
-    this.previewedView = null;
-    this.dismissTween?.stop();
-    this.dismissTween = null;
+    this.clearPlanning();
+    this.pendingTurn = { cards: action.cards, ultimate: action.ultimate, round: this.battle.round };
     const before = this.currentHp();
     playRound(this.battle, action);
     this.presentRound(before);
   }
 
-  // Glide a held preview back into the fan, then rebuild. Async on purpose:
-  // the snap-back was the complaint. Guarded everywhere a rebuild can beat
-  // it there -- renderHand kills the tween, commit paths clear the state --
-  // so a dead or stale target can never drive a render.
-  dismissPreview(): void {
-    const view = this.previewedView;
-    const slotX = this.previewedSlotX;
+  // Forget the turn being planned (the cards are all still in hand).
+  clearPlanning(): void {
+    this.handHint = null;
     this.previewedCardId = null;
-    this.previewedView = null;
-    this.dismissTween?.stop();
-    this.dismissTween = null;
-    if (!view || !view.active || !view.scene) {
-      this.render();
-      return;
-    }
-    this.dismissTween = this.tweens.add({
-      targets: view,
-      x: slotX,
-      y: 0,
-      scale: 1,
-      duration: 120,
-      ease: "Sine.easeIn",
-      onComplete: () => {
-        this.dismissTween = null;
-        if (this.previewedCardId !== null || !this.sys.isActive()) return;
-        this.render();
-      },
-    });
+    this.staged = [];
+    this.stagedUltimate = false;
+    this.stagedTargets = {};
+    this.orders = [];
+    this.targeting = null;
+    this.monsterMenuUid = null;
+  }
+
+  // Cancel the center preview (the card goes back to the hand), a target
+  // pick, or a monster's command menu.
+  dismissPreview(): void {
+    if (this.previewedCardId === null && !this.targeting && this.monsterMenuUid === null) return;
+    this.previewedCardId = null;
+    this.targeting = null;
+    this.monsterMenuUid = null;
+    this.render();
   }
 
   onLeave(): void {
-    // Abandon any commit flight: its continuation must not resolve a round
-    // for a battle being left.
-    this.flightSeq++;
-    this.finishFlight();
     // React shell supplies onExit so Back returns to the menu; fall back to
     // the in-Phaser menu when launched standalone (legacy/dev path).
     if (this.onExit) {
@@ -380,87 +414,16 @@ export class BattleScene extends Phaser.Scene {
     this.scene.start("ClassSelectScene");
   }
 
-  // Settle + clean up any commit flight without landing it. Resolves the
-  // flight promise so awaiters never hang; landing is skipped via the seq.
-  finishFlight(): void {
-    this.flightSeq++;
-    this.flightTween?.stop();
-    this.flightTween = null;
-    this.flightView?.destroy();
-    this.flightView = null;
-    this.flightResolve?.();
-    this.flightResolve = null;
-    this.flightPromise = null;
-  }
-
-  // Toss the committed card from the fan into its arena slot, then continue.
-  // Input stays locked (recapPlaying) from flight start through the recap,
-  // so the 250ms window can't double-commit. Blindness is preserved: the CPU
-  // still picks at resolve time, seeing nothing.
-  beginFlight(card: Card, onLanded: () => void): void {
-    this.finishFlight(); // supersede anything stale (defensive; normally idle)
-    const seq = ++this.flightSeq;
-    // The preview becomes the flight: clear pop state so the fan redraws
-    // whole (the card is still in hand until resolve removes it).
-    this.previewedCardId = null;
-    this.animatePreview = false;
-    this.previewedView = null;
-    this.dismissTween?.stop();
-    this.dismissTween = null;
-    this.pendingPlay = { playerCard: card, round: this.battle.round, cpuRevealed: false };
-    this.recapPlaying = true;
-    this.render();
-
-    const idx = this.battle.player.hand.findIndex((c) => c.id === card.id);
-    const step = CARD_W - FAN_OVERLAP;
-    const totalW = this.battle.player.hand.length * CARD_W - Math.max(0, this.battle.player.hand.length - 1) * FAN_OVERLAP;
-    const fx = GAME_WIDTH / 2 - totalW / 2 + Math.max(0, idx) * step;
-    const { container } = drawCardFace(
-      this,
-      {
-        cardId: card.cardId,
-        category: card.category,
-        name: card.name,
-        damageType: "damageType" in card ? card.damageType : null,
-        description: describeCard(card),
-      },
-      CARD_W,
-      CARD_H
-    );
-    container.setPosition(fx, HAND_Y);
-    this.flightLayer.add(container);
-    this.flightView = container;
-
-    const slotX = GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W + (SLOT_W - CARD_W) / 2;
-    const slotY = SLOT_Y + (SLOT_H - CARD_H) / 2;
-    let resolveFlight!: () => void;
-    this.flightPromise = new Promise<void>((resolve) => {
-      resolveFlight = resolve;
-    });
-    this.flightResolve = resolveFlight;
-    this.flightTween = this.tweens.add({
-      targets: container,
-      x: slotX,
-      y: slotY,
-      duration: FLIGHT_DURATION,
-      ease: "Cubic.easeOut",
-      onComplete: () => {
-        this.flightTween = null;
-        this.flightView = null;
-        container.destroy();
-        this.flightPromise = null;
-        this.flightResolve = null;
-        resolveFlight();
-        if (seq !== this.flightSeq || !this.sys.isActive()) return;
-        onLanded();
-      },
-    });
+  // AP left after the cards picked so far.
+  plannedAp(): number {
+    return checkPlan(this.battle.player, this.staged, false, this.orders).ap;
   }
 
   statusMessage(): string {
     if (this.battle.winner) return `${fighterName(this.battle.winner)} wins! Press "Restart" to play again.`;
     if (this.battle.draw) return `Draw! Press "Restart" to play again.`;
-    return `Round ${this.battle.round} — pick a card. The CPU is choosing at the same time.`;
+    if (this.handHint) return `Round ${this.battle.round} — ${this.handHint}`;
+    return `Round ${this.battle.round} — ${this.plannedAp()}/${this.battle.player.maxAp} AP left. Play cards or click your monsters to give orders, then End turn.`;
   }
 
   // --- scene ---------------------------------------------------------------
@@ -469,22 +432,8 @@ export class BattleScene extends Phaser.Scene {
     useRenderScale(this);
     this.onExit = data.onExit ?? null;
     this.recapPlaying = false;
-    this.previewedCardId = null;
-    this.animatePreview = false;
-    this.previewedView = null;
-    this.dismissTween = null;
-    this.pendingPlay = null;
-    this.flightSeq++; // abandon any flight continuation from a previous life
-    this.flightTween = null;
-    this.flightView = null;
-    this.flightPromise = null;
-    this.flightResolve = null;
-    this.slotViews = {
-      player: { card: null, isBack: false },
-      cpu: { card: null, isBack: false },
-    };
-    this.previewedView = null;
-    this.dismissTween = null;
+    this.clearPlanning();
+    this.pendingTurn = null;
     this.shownHp = null; // { player, cpu } while a recap is counting HP down
     this.panelViews = {};
     this.recapSpeed = readRecapSpeed();
@@ -557,9 +506,12 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5, 0)
     );
 
+    // Above the preview / targeting overlay (depth 900), so the gauge stays
+    // readable while you decide on a card.
+    this.apContainer = this.add.container(0, 0).setDepth(901);
     this.handContainer = this.add.container(0, HAND_Y);
+    this.fieldContainer = this.add.container(0, 0);
     this.slotsContainer = this.add.container(0, 0);
-    this.flightLayer = this.add.container(0, 0);
 
     const ultimate = createButton(this, BUTTON_X, ULTIMATE_BUTTON_Y, BUTTON_W, BUTTON_H, "Use Ultimate", {
       color: COLORS.ultimate,
@@ -567,6 +519,12 @@ export class BattleScene extends Phaser.Scene {
       onClick: () => this.onUltimateClick(),
     });
     this.ultimateButton = ultimate;
+
+    this.endTurnButton = createButton(this, BUTTON_X, END_TURN_BUTTON_Y, BUTTON_W, BUTTON_H, "End turn", {
+      color: AP_GEM_COLOR,
+      hoverColor: 0x4a95e0,
+      onClick: () => this.onEndTurnClick(),
+    });
 
     createButton(this, BUTTON_X, LEAVE_BUTTON_Y, BUTTON_W, BUTTON_H, this.leaveLabel, {
       color: COLORS.restart,
@@ -610,6 +568,9 @@ export class BattleScene extends Phaser.Scene {
       this.scrollLog(Math.sign(dy) * LOG_SCROLL_STEP);
     });
 
+    // The center card preview sits above everything else.
+    this.previewLayer = this.add.container(0, 0).setDepth(900);
+
     this.render();
     loadCardArt(this, allCards(), () => this.render());
   }
@@ -635,21 +596,133 @@ export class BattleScene extends Phaser.Scene {
     this.logScrollThumb.setPosition(LOG_X + LOG_W - 6, thumbY);
   }
 
+  // A hand card was clicked: show it big in the middle of the screen.
   onCardClick(cardId: number): void {
     if (!this.canAct()) return;
-    const action = cardAction(this.battle.player, cardId);
-    if (!action || action.kind !== "card") return;
-    // Preview state was already cleared by the committing click; fly first,
-    // resolve on landing. Ultimate clicks skip the flight (no hand card).
-    this.beginFlight(action.card, () => this.commitAction(action));
+    this.previewedCardId = cardId;
+    this.handHint = null;
+    this.render();
   }
 
+  // The previewed card was clicked again: play it onto the arena slot (it
+  // only leaves the hand for real when the turn resolves).
+  confirmPreview(): void {
+    const card = this.battle.player.hand.find((c) => c.id === this.previewedCardId);
+    this.previewedCardId = null;
+    if (!card || !this.canAct()) return this.render();
+    const reason = unplayableReason(this.battle.player, card, this.staged, this.orders);
+    if (reason) {
+      this.handHint = `can't play ${card.name}: ${reason}.`;
+      return this.render();
+    }
+    // A single-target attack: pick who it hits first (automatic when the
+    // only possible target is the enemy fighter).
+    if (cardNeedsTarget(card)) return this.startTargeting({ kind: "card", card });
+    this.stageCard(card, null);
+  }
+
+  stageCard(card: Card, target: Target | null): void {
+    this.staged = [...this.staged, card];
+    if (target) this.stagedTargets = { ...this.stagedTargets, [card.id]: target };
+    playSfx("card");
+    this.render();
+  }
+
+  // Enter target picking, or skip it when the enemy has no monsters.
+  startTargeting(targeting: NonNullable<BattleScene["targeting"]>): void {
+    this.monsterMenuUid = null;
+    if (this.battle.cpu.field.length === 0) return this.chooseTarget({ kind: "fighter" }, targeting);
+    this.targeting = targeting;
+    this.handHint = null;
+    this.render();
+  }
+
+  chooseTarget(target: Target, targeting = this.targeting): void {
+    this.targeting = null;
+    if (!targeting) return this.render();
+    if (targeting.kind === "card") return this.stageCard(targeting.card, target);
+    this.orders = [...this.orders.filter((o) => o.uid !== targeting.uid), { uid: targeting.uid, use: targeting.use, target }];
+    playSfx("card");
+    this.render();
+  }
+
+  // Keep only the picks that are still payable, in order (after a card or
+  // order was taken back).
+  prunePlan(): void {
+    const player = this.battle.player;
+    const kept: Card[] = [];
+    for (const card of this.staged) if (canPlayCard(player, card, kept)) kept.push(card);
+    this.staged = kept;
+    const keptIds = new Set(kept.map((c) => c.id));
+    this.stagedTargets = Object.fromEntries(Object.entries(this.stagedTargets).filter(([id]) => keptIds.has(Number(id))));
+    const orders: MonsterOrder[] = [];
+    for (const order of this.orders) if (!checkPlan(player, kept, false, [...orders, order]).problem) orders.push(order);
+    this.orders = orders;
+    if (this.stagedUltimate && checkPlan(player, kept, true, orders).problem) this.stagedUltimate = false;
+  }
+
+  // A picked card was clicked on the arena slot: take it back. Cards picked
+  // after it stay only if the turn is still payable without it.
+  unstage(cardId: number): void {
+    if (!this.canAct()) return;
+    this.staged = this.staged.filter((c) => c.id !== cardId);
+    this.prunePlan();
+    this.handHint = null;
+    this.render();
+  }
+
+  // One of your monsters was clicked: cancel its order if it has one,
+  // otherwise open its command menu.
+  onMonsterClick(monster: Monster): void {
+    if (!this.canAct()) return;
+    if (!monster.ready) {
+      this.handHint = `${monster.name} was just summoned -- it can act next round.`;
+      return this.render();
+    }
+    if (this.orders.some((o) => o.uid === monster.uid)) {
+      this.orders = this.orders.filter((o) => o.uid !== monster.uid);
+      this.prunePlan();
+      return this.render();
+    }
+    this.previewedCardId = null;
+    this.monsterMenuUid = monster.uid;
+    this.handHint = null;
+    this.render();
+  }
+
+  giveOrder(monster: Monster, use: MonsterOrder["use"]): void {
+    this.monsterMenuUid = null;
+    const problem = checkPlan(this.battle.player, this.staged, false, [...this.orders, { uid: monster.uid, use, target: null }]).problem;
+    if (problem) {
+      this.handHint = `${problem}.`;
+      return this.render();
+    }
+    if (orderNeedsTarget(monster, use)) return this.startTargeting({ kind: "order", uid: monster.uid, use });
+    this.orders = [...this.orders, { uid: monster.uid, use, target: null }];
+    playSfx("card");
+    this.render();
+  }
+
+  // Ultimate is a toggle: it joins this turn when it's ended.
   onUltimateClick(): void {
     if (!this.canAct()) return;
-    const action = ultimateAction(this.battle.player);
-    if (!action) return;
-    this.pendingPlay = { playerCard: null, round: this.battle.round, cpuRevealed: false };
+    if (!this.stagedUltimate && checkPlan(this.battle.player, this.staged, true, this.orders).problem) return;
+    this.stagedUltimate = !this.stagedUltimate;
     this.render();
+  }
+
+  onEndTurnClick(): void {
+    if (!this.canAct()) return;
+    const action = planAction(this.battle.player, this.staged.map((c) => c.id), this.stagedUltimate, {
+      targets: this.stagedTargets,
+      orders: this.orders,
+      opponent: this.battle.cpu,
+    });
+    if (!action) {
+      this.handHint = "that turn can't be paid for any more -- take a card back.";
+      this.render();
+      return;
+    }
     this.commitAction(action);
   }
 
@@ -661,13 +734,14 @@ export class BattleScene extends Phaser.Scene {
 
   // Show the round that just resolved: draw the new state with the HP from
   // `before`, play the recap (which counts HP down as hits land), then draw
-  // the final state. Without both sides' lastAction (e.g. an online match on
+  // the final state. Without both sides' lastTurn (e.g. an online match on
   // a server that doesn't send it yet) it just redraws.
   async presentRound(before: HpPair): Promise<void> {
     const b = this.battle;
-    const playerAction: LastAction | null = b.player.lastAction;
-    const cpuAction: LastAction | null = b.cpu.lastAction;
-    if (!playerAction || !cpuAction) {
+    const playerTurn: TurnRecord | null = b.player.lastTurn;
+    const cpuTurn: TurnRecord | null = b.cpu.lastTurn;
+    if (!playerTurn || !cpuTurn) {
+      this.pendingTurn = null;
       this.render();
       return;
     }
@@ -675,34 +749,24 @@ export class BattleScene extends Phaser.Scene {
     this.recapPlaying = true;
     this.shownHp = { ...before };
     this.render();
-
-    // The commit flight may still be landing (slow tween, fast resolve path):
-    // the recap must start from settled slot faces, never mid-flight.
-    await this.flightPromise;
-    if (!this.sys.isActive()) return;
+    this.slotsContainer.setVisible(false); // the recap draws each play itself
 
     const slotX = (key: "player" | "cpu"): number =>
       key === "cpu" ? GAME_WIDTH / 2 - SLOT_TOTAL_W / 2 : GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W;
     const side = (key: "player" | "cpu", fighter: Fighter, who: string): RecapSide => ({
-      action: key === "player" ? playerAction : cpuAction,
+      turn: key === "player" ? playerTurn : cpuTurn,
       who,
       classId: fighter.classDef.id,
       className: shortName(fighter.classDef.name),
       ultimateName: ultimateName(fighter.classDef),
       hp: before[key],
       panel: () => this.panelViews[key] as RecapPanel,
-      slot: (): RecapSlotView | null => {
-        const view = this.slotViews[key];
-        if (!view) return null;
-        return { x: slotX(key), y: SLOT_Y, w: SLOT_W, h: SLOT_H, card: view.card, isBack: view.isBack, faceW: CARD_W, faceH: CARD_H };
-      },
-      revealSlot: (): void => {
-        if (this.pendingPlay) this.pendingPlay.cpuRevealed = true;
-      },
+      fieldCenter: () => ({ x: (key === "cpu" ? CPU_FIELD_X : PLAYER_FIELD_X) + FIELD_W / 2, y: FIELD_Y + FIELD_H / 2 }),
+      slot: { x: slotX(key), y: SLOT_Y, w: SLOT_W, h: SLOT_H, faceW: CARD_W, faceH: CARD_H },
     });
 
     playRoundRecap(this, {
-      round: playerAction.round,
+      round: playerTurn.round,
       stage: RECAP_STAGE,
       sides: {
         player: side("player", b.player, "You"),
@@ -712,7 +776,8 @@ export class BattleScene extends Phaser.Scene {
     }).finally(() => {
       this.recapPlaying = false;
       this.shownHp = null;
-      this.pendingPlay = null; // slots empty again until the next commit
+      this.pendingTurn = null; // slots empty again until the next turn
+      this.slotsContainer.setVisible(true);
       if (this.sys.isActive()) this.render();
     });
   }
@@ -866,12 +931,24 @@ export class BattleScene extends Phaser.Scene {
     this.renderFighterPanel("player", this.playerPanel, STRIP_X, PLAYER_STRIP_Y, STRIP_W, this.battle.player);
     this.drawPortrait(this.cpuPortrait, PORTRAIT_X, CPU_PORTRAIT_Y, this.battle.cpu, this.opponentLabel);
     this.drawPortrait(this.playerPortrait, PORTRAIT_X, PLAYER_PORTRAIT_Y, this.battle.player, this.playerLabel);
+    this.drawFields();
     this.drawSlots();
     this.renderHand(locked);
     this.renderLog();
+    this.drawApGauge();
+    this.drawPreview(locked);
+    if (!locked) {
+      this.drawTargeting();
+      this.drawMonsterMenu();
+    }
 
     this.statusText.setText(this.statusMessage());
-    this.ultimateButton.setEnabled(!locked && canUseUltimate(this.battle.player));
+    const ultimateReady = !checkPlan(this.battle.player, this.staged, true, this.orders).problem;
+    this.ultimateButton.setEnabled(!locked && (this.stagedUltimate || ultimateReady));
+    (this.ultimateButton.container.getAt(1) as Phaser.GameObjects.Text).setText(this.stagedUltimate ? "Ultimate ✓ (undo)" : "Use Ultimate");
+    this.endTurnButton.setEnabled(!locked);
+    const plays = this.staged.length + (this.stagedUltimate ? 1 : 0) + this.orders.length;
+    (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn (${plays})` : "End turn (pass)");
 
     if (isBattleOver(this.battle) && !this.recapPlaying) this.showResult();
   }
@@ -951,14 +1028,27 @@ export class BattleScene extends Phaser.Scene {
   }
 
   drawPanelHeader(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
-    container.add(
-      this.add.text(STRIP_PAD, 6, shortName(fighter.classDef.name), {
-        fontFamily: FONT_FAMILY,
-        fontSize: "14px",
-        fontStyle: "700",
-        color: TEXT.white,
-      })
-    );
+    const name = this.add.text(STRIP_PAD, 6, shortName(fighter.classDef.name), {
+      fontFamily: FONT_FAMILY,
+      fontSize: "14px",
+      fontStyle: "700",
+      color: TEXT.white,
+    });
+    container.add(name);
+
+    // AP pill beside the name: left this turn / this turn's max (for you,
+    // after the cards picked so far).
+    const apText = this.add
+      .text(0, 0, `AP ${fmt(fighter === this.battle.player && !this.pendingTurn ? this.plannedAp() : fighter.ap)}/${fighter.maxAp ?? fighter.ap}`, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: TEXT.white })
+      .setOrigin(0, 0.5);
+    const pillX = STRIP_PAD + name.width + 10;
+    const pillW = apText.width + 16;
+    const pill = this.add.graphics();
+    pill.fillStyle(AP_GEM_COLOR, 1);
+    pill.fillRoundedRect(pillX, 5, pillW, 18, 9);
+    apText.setPosition(pillX + 8, 14);
+    container.add([pill, apText]);
+
     const handCount = fighter.handCount ?? fighter.hand.length;
     container.add(
       this.add
@@ -1146,6 +1236,12 @@ export class BattleScene extends Phaser.Scene {
   drawEffectChips(container: Phaser.GameObjects.Container, fighter: Fighter, w: number, y: number, maxX: number): void {
     const chips: Array<{ text: string; color: number }> = [];
 
+    // Statuses first: they're what most needs noticing.
+    for (const [id, state] of Object.entries(fighter.statuses ?? {}) as Array<[StatusId, { potency: number; remaining: number }]>) {
+      const potency = id === STATUS.WET || id === STATUS.BLIND ? "" : ` ${state.potency}`;
+      chips.push({ text: `${STATUS_LABEL[id] ?? id}${potency} · ${state.remaining}t`, color: STATUS_COLOR[id] ?? CHIP_COLOR.down });
+    }
+
     for (const synergy of fighter.classDef.synergyPool) {
       const count = fighter.cardsPlayedByCategory[synergy.countsCategory] ?? 0;
       const disabledFor = fighter.disabledSynergyTimers[synergy.id];
@@ -1169,12 +1265,9 @@ export class BattleScene extends Phaser.Scene {
     }
 
     for (const { effect, remaining } of fighter.tempModifiers) {
+      // Only stat modifiers and regen end up here (see applyEffects).
       const positive =
-        effect.kind === EFFECT_KIND.ENERGY_REGEN ||
-        (effect.kind !== EFFECT_KIND.SYNERGY_DISABLE &&
-          effect.kind !== EFFECT_KIND.SUMMON &&
-          effect.kind !== EFFECT_KIND.CONDITIONAL &&
-          effect.amount >= 0);
+        effect.kind === EFFECT_KIND.ENERGY_REGEN || (effect.kind === EFFECT_KIND.STAT_MODIFIER && effect.amount >= 0);
       chips.push({ text: `${describeEffect(effect)} · ${remaining}t`, color: positive ? CHIP_COLOR.up : CHIP_COLOR.down });
     }
 
@@ -1240,101 +1333,322 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  renderHand(locked: boolean): void {
-    // A rebuild invalidates any glide-back target: kill it first so a dead
-    // container can never drive (or double-fire) a render.
-    this.dismissTween?.stop();
-    this.dismissTween = null;
-    this.handContainer.removeAll(true);
-    const cards = this.battle.player.hand;
-    const step = CARD_W - FAN_OVERLAP;
-    const totalW = cards.length * CARD_W - Math.max(0, cards.length - 1) * FAN_OVERLAP;
-    const x0 = GAME_WIDTH / 2 - totalW / 2;
-
-    // Previewed card renders last so it floats above the fan.
-    for (let i = 0; i < cards.length; i++) {
-      const card = cards[i] as Card;
-      if (card.id === this.previewedCardId) continue;
-      this.drawHandCard(card, x0 + i * step, false, locked);
+  // AP this turn would spend on what's being looked at right now: the
+  // previewed card, or the card / monster order whose target is being picked.
+  pendingSpend(): number {
+    const player = this.battle.player;
+    const previewed = player.hand.find((c) => c.id === this.previewedCardId);
+    if (previewed) return cardCost(previewed);
+    const t = this.targeting;
+    if (t?.kind === "card") return cardCost(t.card);
+    if (t?.kind === "order") {
+      const monster = player.field.find((m) => m.uid === t.uid);
+      return monster ? orderCost(monster, t.use) : 0;
     }
-    const pi = cards.findIndex((c) => c.id === this.previewedCardId);
-    if (pi !== -1) this.drawHandCard(cards[pi] as Card, x0 + pi * step, true, locked);
+    return 0;
   }
 
-  drawHandCard(card: Card, x: number, previewed: boolean, locked: boolean): void {
-    const { container: cardContainer, bg } = drawCardFace(
-      this,
-      {
-        cardId: card.cardId,
-        category: card.category,
-        name: card.name,
-        damageType: "damageType" in card ? card.damageType : null,
-        description: describeCard(card),
-      },
-      CARD_W,
-      CARD_H
+  drawApGauge(): void {
+    const c = this.apContainer;
+    c.removeAll(true);
+    const { x, y, w, h } = AP_PANEL;
+    const player = this.battle.player;
+    const max = player.maxAp ?? player.ap;
+    const planning = !this.pendingTurn && this.canAct();
+    const left = planning ? this.plannedAp() : player.ap;
+    const preview = planning ? Math.min(left, this.pendingSpend()) : 0;
+    const short = planning && this.pendingSpend() > left;
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0b1626, 0.92);
+    bg.fillRoundedRect(x, y, w, h, 12);
+    bg.lineStyle(2, short ? AP_SHORT_COLOR : AP_GEM_COLOR, 1);
+    bg.strokeRoundedRect(x, y, w, h, 12);
+    c.add(bg);
+
+    c.add(
+      this.add
+        .text(x + w / 2, y + 8, "ACTION POINTS", { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: "#8fc8ff" })
+        .setOrigin(0.5, 0)
     );
-    if (previewed) {
-      const ring = this.add.graphics();
-      ring.lineStyle(3, PREVIEW_RING, 1);
-      ring.strokeRoundedRect(-6, -6, CARD_W + 12, CARD_H + 12, 14);
-      cardContainer.add(ring);
-      const popX = x - (CARD_W * (POP_SCALE - 1)) / 2;
-      this.previewedView = cardContainer;
-      this.previewedSlotX = x;
-      if (this.animatePreview) {
-        // Spring into place from the slot (selection moment only); every
-        // other rebuild lands instantly so the pop never replays.
-        this.animatePreview = false;
-        cardContainer.setPosition(x, 0).setScale(1);
-        this.tweens.add({
-          targets: cardContainer,
-          x: popX,
-          y: -POP_LIFT,
-          scale: POP_SCALE,
-          duration: 140,
-          ease: "Back.easeOut",
-        });
+    const big = this.add
+      .text(0, y + 22, String(left), {
+        fontFamily: FONT_FAMILY,
+        fontSize: "46px",
+        fontStyle: "900",
+        color: left === 0 ? "#7d8aa0" : TEXT.white,
+        stroke: "#000000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0, 0);
+    const of = this.add
+      .text(0, y + 44, `/ ${max}`, { fontFamily: FONT_FAMILY, fontSize: "20px", fontStyle: "800", color: "#8fc8ff" })
+      .setOrigin(0, 0);
+    const total = big.width + 6 + of.width;
+    big.setX(x + w / 2 - total / 2);
+    of.setX(big.x + big.width + 6);
+    c.add([big, of]);
+
+    // Gems: 5 per row, AP_RULES.max in all.
+    for (let i = 0; i < AP_RULES.max; i++) {
+      const px = x + w / 2 + ((i % 5) - 2) * AP_PIP_STEP;
+      const py = y + 92 + Math.floor(i / 5) * AP_PIP_STEP;
+      const gem = this.add.graphics();
+      if (i < left - preview) {
+        gem.fillStyle(AP_LIVE, 1).fillCircle(px, py, AP_PIP_R);
+        gem.fillStyle(0xffffff, 0.55).fillCircle(px - 3, py - 3, AP_PIP_R * 0.35);
+      } else if (i < left) {
+        // About to be spent on the card being looked at.
+        gem.fillStyle(0xffd23f, 1).fillCircle(px, py, AP_PIP_R);
+        this.tweens.add({ targets: gem, alpha: 0.35, duration: 380, yoyo: true, repeat: -1 });
+        gem.once("destroy", () => this.tweens.killTweensOf(gem));
+      } else if (i < max) {
+        gem.fillStyle(AP_SPENT, 1).fillCircle(px, py, AP_PIP_R);
+        gem.lineStyle(2, 0x2f7fd0, 0.8).strokeCircle(px, py, AP_PIP_R);
       } else {
-        cardContainer.setPosition(popX, -POP_LIFT).setScale(POP_SCALE);
+        gem.lineStyle(1.5, 0x3a4a60, 0.7).strokeCircle(px, py, AP_PIP_R - 3);
       }
-    } else {
-      cardContainer.setPosition(x, 0);
+      c.add(gem);
     }
 
-    if (!locked) {
-      bg.on("pointerover", (pointer: Phaser.Input.Pointer) => {
-        if (pointer.wasTouch || this.previewedCardId === card.id) return;
-        this.tweens.killTweensOf(cardContainer);
-        this.tweens.add({ targets: cardContainer, y: -HOVER_LIFT, duration: 100 });
-      });
-      bg.on("pointerout", () => {
-        if (this.previewedCardId === card.id) return; // keep the pop
-        this.tweens.killTweensOf(cardContainer);
-        this.tweens.add({ targets: cardContainer, y: 0, duration: 100 });
-      });
-      bg.on("pointerdown", () => {
-        if (this.previewedCardId === card.id) {
-          this.onCardClick(card.id); // second click commits
-          return;
-        }
-        this.previewedCardId = card.id;
-        this.animatePreview = true;
-        this.render();
-      });
+    let note: string;
+    let color: string = TEXT.muted;
+    if (!planning) {
+      note = isBattleOver(this.battle) ? "" : "turn sent";
+    } else if (short) {
+      note = `needs ${this.pendingSpend()} AP — not enough`;
+      color = "#ff8a80";
+    } else if (preview > 0) {
+      note = `→ ${left - preview} AP after this`;
+      color = "#ffd23f";
     } else {
+      const spent = max - left;
+      note = spent > 0 ? `${spent} AP planned this turn` : `next round: ${Math.min(AP_RULES.max, max + AP_RULES.growth)} max AP`;
+    }
+    c.add(
+      this.add.text(x + w / 2, y + h - 16, note, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color }).setOrigin(0.5, 0)
+    );
+  }
+
+  renderHand(locked: boolean): void {
+    this.handContainer.removeAll(true);
+    // Picked cards have moved onto the arena slot.
+    const stagedIds = new Set(this.staged.map((c) => c.id));
+    const cards = this.battle.player.hand.filter((c) => !stagedIds.has(c.id) && c.id !== this.previewedCardId);
+    const step = CARD_W - FAN_OVERLAP;
+    const totalW = cards.length * CARD_W - Math.max(0, cards.length - 1) * FAN_OVERLAP;
+    // Centered, but never over the AP gauge on the left (big hands shift right).
+    const x0 = Math.max(GAME_WIDTH / 2 - totalW / 2, AP_PANEL.x + AP_PANEL.w + 8);
+    cards.forEach((card, i) => this.drawHandCard(card, x0 + i * step, locked));
+  }
+
+  // Face data for a hand card, with its cost gem red when this turn's AP
+  // left can't pay for it.
+  handFace(card: Card): CardFaceData {
+    return { ...cardFaceData(card), costShort: !this.pendingTurn && cardCost(card) > this.plannedAp() };
+  }
+
+  drawHandCard(card: Card, x: number, locked: boolean): void {
+    const { container: cardContainer, bg } = drawCardFace(this, this.handFace(card), CARD_W, CARD_H);
+    cardContainer.setPosition(x, 0);
+    if (locked) {
       cardContainer.setAlpha(0.5);
       bg.disableInteractive();
+    } else {
+      // Can't be paid for after what's already picked: dimmed, but it can
+      // still be opened to read (the preview says why it can't be played).
+      if (unplayableReason(this.battle.player, card, this.staged, this.orders)) cardContainer.setAlpha(0.55);
+      // Hover expands the card, growing up from its bottom edge.
+      bg.on("pointerover", (pointer: Phaser.Input.Pointer) => {
+        if (pointer.wasTouch) return;
+        this.handContainer.bringToTop(cardContainer);
+        this.tweens.killTweensOf(cardContainer);
+        this.tweens.add({
+          targets: cardContainer,
+          x: x - (CARD_W * (HOVER_SCALE - 1)) / 2,
+          y: -HOVER_LIFT - CARD_H * (HOVER_SCALE - 1),
+          scale: HOVER_SCALE,
+          duration: 100,
+        });
+      });
+      bg.on("pointerout", () => {
+        this.tweens.killTweensOf(cardContainer);
+        this.tweens.add({ targets: cardContainer, x, y: 0, scale: 1, duration: 100 });
+      });
+      bg.on("pointerdown", () => this.onCardClick(card.id));
     }
-
     this.handContainer.add(cardContainer);
   }
 
-  // Middle arena slots holding each side's last resolved card. Fed solely by
-  // post-resolution lastAction -- vacant pre-first-commit -- so the CPU slot
-  // can never leak a face before reveal.
-  // Face-down back for the CPU slot: the pending round exists, but the move
-  // must stay hidden until the recap's flip reveal.
+  // The previewed card, full size in the middle of the screen over a dimmed
+  // board: click it to play it, click anywhere else to put it back.
+  drawPreview(locked: boolean): void {
+    this.previewLayer.removeAll(true);
+    const card = this.battle.player.hand.find((c) => c.id === this.previewedCardId);
+    if (!card || locked) return;
+
+    const dim = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x05070d, 0.6).setOrigin(0, 0).setInteractive();
+    dim.on("pointerdown", () => this.dismissPreview());
+    this.previewLayer.add(dim);
+
+    const w = CARD_W * PREVIEW_SCALE;
+    const h = CARD_H * PREVIEW_SCALE;
+    const x = GAME_WIDTH / 2 - w / 2;
+    const y = GAME_HEIGHT / 2 - h / 2 - 20;
+    const { container, bg } = drawCardFace(this, this.handFace(card), w, h, { scale: PREVIEW_SCALE });
+    const ring = this.add.graphics();
+    ring.lineStyle(4, PREVIEW_RING, 1);
+    ring.strokeRoundedRect(-7, -7, w + 14, h + 14, 16);
+    container.add(ring);
+    bg.on("pointerdown", () => this.confirmPreview());
+    this.previewLayer.add(container);
+
+    const reason = unplayableReason(this.battle.player, card, this.staged, this.orders);
+    const after = checkPlan(this.battle.player, [...this.staged, card], false, this.orders).ap;
+    const aim = cardNeedsTarget(card) && this.battle.cpu.field.length > 0 ? " -- then pick its target" : "";
+    const hint = reason
+      ? `Can't play this now: ${reason}.\nClick anywhere to put it back.`
+      : `Click the card to play it (AP ${this.plannedAp()} → ${after})${aim}.\nClick anywhere else to put it back.`;
+    this.previewLayer.add(
+      textShadow(
+        this.add
+          .text(GAME_WIDTH / 2, y + h + 22, hint, {
+            fontFamily: FONT_FAMILY,
+            fontSize: "15px",
+            fontStyle: "700",
+            color: reason ? "#ff8a80" : TEXT.white,
+            align: "center",
+          })
+          .setOrigin(0.5, 0)
+      )
+    );
+
+    // Pop in from slightly smaller, centered.
+    container.setAlpha(0).setScale(0.85).setPosition(x + (w * 0.15) / 2, y + (h * 0.15) / 2);
+    this.tweens.add({ targets: container, alpha: 1, scale: 1, x, y, duration: 140, ease: "Back.easeOut" });
+  }
+
+  // Picking a target: the board dims, and every legal target on the enemy
+  // side (their fighter -- strip or portrait -- and their monsters) lights up
+  // to be clicked. A guard monster has to be picked first. Clicking anywhere
+  // else cancels.
+  drawTargeting(): void {
+    const targeting = this.targeting;
+    if (!targeting) return;
+    const opponent = this.battle.cpu;
+    const dim = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x05070d, 0.55).setOrigin(0, 0).setInteractive();
+    dim.on("pointerdown", () => this.dismissPreview());
+    this.previewLayer.add(dim);
+
+    const box = (x: number, y: number, w: number, h: number, target: Target): void => {
+      const legal = !targetProblem(opponent, target);
+      const g = this.add.graphics();
+      if (legal) {
+        g.fillStyle(0xff5a4f, 0.16);
+        g.fillRoundedRect(x, y, w, h, 10);
+        g.lineStyle(3, 0xff5a4f, 1);
+        g.strokeRoundedRect(x, y, w, h, 10);
+        g.setInteractive(new Phaser.Geom.Rectangle(x, y, w, h), Phaser.Geom.Rectangle.Contains);
+        g.on("pointerdown", () => this.chooseTarget(target));
+        this.tweens.add({ targets: g, alpha: 0.55, duration: 500, yoyo: true, repeat: -1 });
+        g.once("destroy", () => this.tweens.killTweensOf(g));
+      } else {
+        g.fillStyle(0x05070d, 0.45);
+        g.fillRoundedRect(x, y, w, h, 10);
+      }
+      this.previewLayer.add(g);
+    };
+    box(STRIP_X, CPU_STRIP_Y, STRIP_W, STRIP_H, { kind: "fighter" });
+    box(PORTRAIT_X, CPU_PORTRAIT_Y, PORTRAIT_W, PORTRAIT_H, { kind: "fighter" });
+    opponent.field.forEach((monster, i) => {
+      const pos = this.monsterPos("cpu", i);
+      box(pos.x - 3, pos.y - 3, MONSTER_W + 6, MONSTER_H + 6, { kind: "monster", uid: monster.uid });
+    });
+
+    let what: string;
+    if (targeting.kind === "card") {
+      what = targeting.card.name;
+    } else {
+      const monster = this.battle.player.field.find((m) => m.uid === targeting.uid);
+      what = `${monster?.name ?? "your monster"}'s ${targeting.use === "attack" ? "attack" : (monster?.ability?.name ?? "ability")}`;
+    }
+    const guard = opponent.field.some((m) => m.guard) ? "\nA guard monster is in the way: it has to be hit first." : "";
+    this.previewLayer.add(
+      textShadow(
+        this.add
+          .text(GAME_WIDTH / 2, 470, `Choose a target for ${what}.${guard}\nClick anywhere else to cancel.`, {
+            fontFamily: FONT_FAMILY,
+            fontSize: "16px",
+            fontStyle: "800",
+            color: TEXT.white,
+            align: "center",
+          })
+          .setOrigin(0.5, 0)
+      )
+    );
+  }
+
+  // Your monster's command menu: attack, its ability, or cancel -- each
+  // with its AP cost, greyed out when this turn can't pay for it.
+  drawMonsterMenu(): void {
+    const player = this.battle.player;
+    const index = player.field.findIndex((m) => m.uid === this.monsterMenuUid);
+    const monster = player.field[index];
+    if (!monster) return;
+    const dim = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x05070d, 0.45).setOrigin(0, 0).setInteractive();
+    dim.on("pointerdown", () => this.dismissPreview());
+    this.previewLayer.add(dim);
+
+    const w = 236;
+    const ability = monster.ability;
+    const h = ability ? 214 : 150;
+    const pos = this.monsterPos("player", index);
+    const x = Math.max(STRIP_X, pos.x + MONSTER_W / 2 - w / 2 - 120);
+    const y = FIELD_Y - 10;
+    const panel = this.add.graphics();
+    panel.fillStyle(COLORS.panel, 0.98);
+    panel.fillRoundedRect(x, y, w, h, 12);
+    panel.lineStyle(2, PREVIEW_RING, 1);
+    panel.strokeRoundedRect(x, y, w, h, 12);
+    panel.setInteractive(new Phaser.Geom.Rectangle(x, y, w, h), Phaser.Geom.Rectangle.Contains); // clicks on the panel don't cancel
+    this.previewLayer.add(panel);
+    this.previewLayer.add(
+      this.add.text(x + 14, y + 10, monster.name, { fontFamily: FONT_FAMILY, fontSize: "15px", fontStyle: "800", color: TEXT.white })
+    );
+    this.previewLayer.add(
+      this.add.text(x + 14, y + 31, `${Math.ceil(monster.hp)}/${monster.maxHp} HP · ATK ${monster.atk} · SPD ${monster.speed}`, {
+        fontFamily: FONT_FAMILY,
+        fontSize: "11px",
+        color: TEXT.muted,
+      })
+    );
+
+    const affordable = (use: MonsterOrder["use"]): boolean =>
+      !checkPlan(player, this.staged, false, [...this.orders, { uid: monster.uid, use, target: null }]).problem;
+    let by = y + 52;
+    const option = (label: string, enabled: boolean, onClick: () => void, color: number, hover: number): void => {
+      const button = createButton(this, x + 14, by, w - 28, 34, label, { color, hoverColor: hover, onClick });
+      button.setEnabled(enabled);
+      this.previewLayer.add(button.container);
+      by += 42;
+    };
+    option(`Attack (${monster.atk} dmg) — ${orderCost(monster, "attack")} AP`, affordable("attack"), () => this.giveOrder(monster, "attack"), 0xb5423a, 0xcc5a50);
+    if (ability) {
+      option(`${ability.name} — ${ability.cost} AP`, affordable("ability"), () => this.giveOrder(monster, "ability"), 0x6a4a94, 0x8060aa);
+      this.previewLayer.add(
+        this.add.text(x + 14, by - 6, describeAbility(ability) + (ability.target === "self" ? " (on you)" : ""), {
+          fontFamily: FONT_FAMILY,
+          fontSize: "11px",
+          color: TEXT.muted,
+          wordWrap: { width: w - 28 },
+        })
+      );
+      by += 22;
+    }
+    option("Cancel", true, () => this.dismissPreview(), COLORS.restart, COLORS.restartHover);
+  }
+
+  // Face-down card for the opponent's slot while a sent turn resolves.
   drawCardBack(): Phaser.GameObjects.Container {
     const container = this.add.container(0, 0);
     const g = this.add.graphics();
@@ -1354,79 +1668,249 @@ export class BattleScene extends Phaser.Scene {
     return container;
   }
 
-  // Arena slots show the in-flight round only: the committed player face (or
-  // nothing pre-landing... the flight clone covers the gap), the CPU back
-  // until the recap flips it, and vacant frames otherwise. lastAction faces
-  // are NOT drawn here -- the recap performs from these live objects instead
-  // of minting duplicates, then they fade and the slots empty again.
+  // Arena slots. Yours holds the cards picked this turn (shrunk and fanned;
+  // click one to take it back) -- only this client sees them. Once the turn
+  // is sent, the opponent's slot shows a face-down card until the recap.
   drawSlots(): void {
     this.slotsContainer.removeAll(true);
-    const pending = this.pendingPlay;
-    const sides: Array<{ key: "player" | "cpu"; fighter: Fighter; x: number }> = [
-      { key: "cpu", fighter: this.battle.cpu, x: GAME_WIDTH / 2 - SLOT_TOTAL_W / 2 },
-      { key: "player", fighter: this.battle.player, x: GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W },
+    const pending = this.pendingTurn;
+    const muted = (x: number, text: string): Phaser.GameObjects.Text =>
+      this.add
+        .text(x + SLOT_W / 2, SLOT_Y + SLOT_H / 2, text, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted, align: "center" })
+        .setOrigin(0.5);
+    const sides: Array<{ key: "player" | "cpu"; x: number }> = [
+      { key: "cpu", x: GAME_WIDTH / 2 - SLOT_TOTAL_W / 2 },
+      { key: "player", x: GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W },
     ];
-    for (const { key, fighter, x } of sides) {
+    for (const { key, x } of sides) {
       const frame = this.add.graphics();
       frame.lineStyle(2, 0x4a5573, 1);
       frame.strokeRoundedRect(x, SLOT_Y, SLOT_W, SLOT_H, 10);
       this.slotsContainer.add(frame);
-      const fx = x + (SLOT_W - CARD_W) / 2;
-      const fy = SLOT_Y + (SLOT_H - CARD_H) / 2;
 
-      let card: Phaser.GameObjects.Container | null = null;
-      let isBack = false;
-      if (key === "player" && pending?.playerCard) {
-        const played = pending.playerCard;
-        const { container } = drawCardFace(
-          this,
-          {
-            cardId: played.cardId,
-            category: played.category,
-            name: played.name,
-            damageType: "damageType" in played ? played.damageType : null,
-            description: describeCard(played),
-          },
-          CARD_W,
-          CARD_H
-        );
-        container.setPosition(fx, fy);
-        this.slotsContainer.add(container);
-        card = container;
-      } else if (key === "cpu" && pending) {
-        const last = fighter.lastAction;
-        if (last && last.round === pending.round && pending.cpuRevealed && last.kind !== "none") {
-          const face =
-            last.kind === "ultimate"
-              ? {
-                  category: "ultimate",
-                  name: ultimateName(fighter.classDef),
-                  description: `${fmt(last.damage ?? 0)} damage`,
-                }
-              : { ...last, category: last.category ?? "" };
-          const { container } = drawCardFace(this, face, CARD_W, CARD_H);
-          container.setPosition(fx, fy);
-          this.slotsContainer.add(container);
-          card = container;
-        } else {
+      if (key === "cpu") {
+        if (pending) {
           const back = this.drawCardBack();
-          back.setPosition(fx, fy);
+          back.setPosition(x + (SLOT_W - CARD_W) / 2, SLOT_Y + (SLOT_H - CARD_H) / 2);
           this.slotsContainer.add(back);
-          card = back;
-          isBack = true;
+        } else {
+          this.slotsContainer.add(muted(x, "—"));
         }
-      } else {
-        const hint = this.add
-          .text(x + SLOT_W / 2, SLOT_Y + SLOT_H / 2, "—", {
+        continue;
+      }
+
+      const cards = pending ? pending.cards : this.staged;
+      const ultimate = pending ? pending.ultimate : this.stagedUltimate;
+      const faces: Array<{ data: CardFaceData; cardId: number | null }> = cards.map((c) => ({ data: cardFaceData(c), cardId: c.id }));
+      if (ultimate) {
+        faces.push({ data: { category: "ultimate", name: ultimateName(this.battle.player.classDef), description: "" }, cardId: null });
+      }
+      if (faces.length === 0) {
+        this.slotsContainer.add(muted(x, pending ? "Pass" : "Click a card,\nthen click it again\nto play it here"));
+        continue;
+      }
+      const w = CARD_W * STAGE_SCALE;
+      const h = CARD_H * STAGE_SCALE;
+      const step = faces.length > 1 ? Math.min(w + 4, (SLOT_W - 10 - w) / (faces.length - 1)) : 0;
+      const x0 = x + (SLOT_W - (w + step * (faces.length - 1))) / 2;
+      faces.forEach(({ data, cardId }, i) => {
+        const { container, bg } = drawCardFace(this, data, w, h, { scale: STAGE_SCALE });
+        container.setPosition(x0 + i * step, SLOT_Y + (SLOT_H - h) / 2 + 8);
+        if (!pending && this.canAct()) {
+          bg.on("pointerdown", () => (cardId === null ? this.onUltimateClick() : this.unstage(cardId)));
+        } else {
+          bg.disableInteractive();
+        }
+        this.slotsContainer.add(container);
+        const target = cardId !== null && !pending ? this.stagedTargets[cardId] : undefined;
+        if (target) {
+          this.slotsContainer.add(
+            this.add
+              .text(x0 + i * step + w / 2, SLOT_Y + (SLOT_H - h) / 2 + 8 + h + 3, `→ ${this.targetName(target)}`, {
+                fontFamily: FONT_FAMILY,
+                fontSize: "9px",
+                fontStyle: "800",
+                color: "#ffd23f",
+                stroke: "#000000",
+                strokeThickness: 2,
+              })
+              .setOrigin(0.5, 0)
+          );
+        }
+      });
+      this.slotsContainer.add(
+        this.add
+          .text(x + SLOT_W / 2, SLOT_Y + 6, pending ? "SENT" : "CLICK ONE TO TAKE IT BACK", {
             fontFamily: FONT_FAMILY,
-            fontSize: "12px",
+            fontSize: "9px",
+            fontStyle: "700",
             color: TEXT.muted,
           })
-          .setOrigin(0.5);
-        this.slotsContainer.add(hint);
-      }
-      this.slotViews[key] = { card, isBack };
+          .setOrigin(0.5, 0)
+      );
     }
+  }
+
+  // Both monster fields, beside their owner's arena slot.
+  drawFields(): void {
+    this.fieldContainer.removeAll(true);
+    const sides: Array<{ fighter: Fighter; x: number; label: string }> = [
+      { fighter: this.battle.cpu, x: CPU_FIELD_X, label: `${this.opponentLabel} field` },
+      { fighter: this.battle.player, x: PLAYER_FIELD_X, label: "Your field" },
+    ];
+    for (const { fighter, x, label } of sides) {
+      const field = fighter.field ?? [];
+      const backing = this.add.graphics();
+      backing.fillStyle(0x0b0d15, 0.5);
+      backing.fillRoundedRect(x, FIELD_Y, FIELD_W, FIELD_H, 10);
+      this.fieldContainer.add(backing);
+      this.fieldContainer.add(
+        this.add.text(x + 8, FIELD_Y + 5, `${label.toUpperCase()} ${field.length}/${FIELD_SIZE}`, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "10px",
+          fontStyle: "700",
+          color: TEXT.muted,
+        })
+      );
+      if (field.length === 0) {
+        this.fieldContainer.add(
+          this.add
+            .text(x + FIELD_W / 2, FIELD_Y + FIELD_H / 2 + 8, "no monsters", { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
+            .setOrigin(0.5)
+            .setAlpha(0.7)
+        );
+      }
+      field.forEach((monster, i) => {
+        const pos = this.monsterPos(fighter === this.battle.player ? "player" : "cpu", i);
+        this.drawMonster(monster, pos.x, pos.y, !monster.ready, fighter === this.battle.player);
+      });
+    }
+  }
+
+  // Top-left of the i-th monster token on a side's field.
+  monsterPos(key: "player" | "cpu", index: number): { x: number; y: number } {
+    const x = key === "cpu" ? CPU_FIELD_X : PLAYER_FIELD_X;
+    return { x: x + index * (MONSTER_W + MONSTER_GAP), y: FIELD_Y + 26 };
+  }
+
+  targetName(target: Target): string {
+    if (target.kind === "fighter") return this.opponentLabel;
+    return this.battle.cpu.field.find((m) => m.uid === target.uid)?.name ?? "monster";
+  }
+
+  // One monster token: art, name, HP bar, ATK/SPD, and a blue frame for a
+  // guard. `fresh`: summoned this round, so it can only act from the next
+  // one. Your own ready monsters are clickable (command menu); one with an
+  // order this turn gets a gold frame and says what it'll do.
+  drawMonster(monster: Monster, x: number, y: number, fresh: boolean, own: boolean): void {
+    const c = this.add.container(x, y);
+    const order = own && !this.pendingTurn ? this.orders.find((o) => o.uid === monster.uid) : undefined;
+    const g = this.add.graphics();
+    g.fillStyle(COLORS.card.monster, 1);
+    g.fillRoundedRect(0, 0, MONSTER_W, MONSTER_H, 8);
+    if (monster.guard) {
+      g.lineStyle(3, MONSTER_GUARD, 1);
+      g.strokeRoundedRect(1.5, 1.5, MONSTER_W - 3, MONSTER_H - 3, 8);
+    }
+    if (order || this.monsterMenuUid === monster.uid) {
+      g.lineStyle(3, PREVIEW_RING, 1);
+      g.strokeRoundedRect(-2, -2, MONSTER_W + 4, MONSTER_H + 4, 10);
+    }
+    if (own && this.canAct() && !this.pendingTurn) {
+      g.setInteractive(new Phaser.Geom.Rectangle(0, 0, MONSTER_W, MONSTER_H), Phaser.Geom.Rectangle.Contains);
+      g.on("pointerdown", () => this.onMonsterClick(monster));
+    }
+    c.add(g);
+    if (order) {
+      // One short line under the token: "ATK → Skeleton", "Fortify".
+      const what = order.use === "attack" ? "ATK" : (monster.ability?.name ?? "Ability");
+      const name = order.target ? this.targetName(order.target) : "";
+      const aim = order.target ? ` → ${name.length > 9 ? `${name.slice(0, 8)}…` : name}` : "";
+      c.add(
+        this.add
+          .text(MONSTER_W / 2, MONSTER_H + 2, `${what}${aim}`, {
+            fontFamily: FONT_FAMILY,
+            fontSize: "9px",
+            fontStyle: "800",
+            color: "#ffd23f",
+            stroke: "#000000",
+            strokeThickness: 3,
+          })
+          .setOrigin(0.5, 0)
+      );
+    }
+
+    const artW = MONSTER_W - 8;
+    const artH = Math.round(artW * 0.75);
+    const box = this.add.graphics();
+    box.fillStyle(COLORS.background, 0.45);
+    box.fillRoundedRect(4, 4, artW, artH, 6);
+    c.add(box);
+    const artKey = loadedArtKey(this, monster.cardId);
+    if (artKey) {
+      c.add(this.add.image(4 + artW / 2, 4 + artH / 2, artKey).setDisplaySize(artW - 2, artH - 2));
+    } else if (this.textures.exists(CARD_ICON_KEY.monster)) {
+      c.add(this.add.image(4 + artW / 2, 4 + artH / 2, CARD_ICON_KEY.monster).setDisplaySize(30, 30));
+    }
+
+    c.add(
+      this.add
+        .text(MONSTER_W / 2, artH + 7, monster.name, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "10px",
+          fontStyle: "700",
+          color: TEXT.white,
+          align: "center",
+          wordWrap: { width: MONSTER_W - 6 },
+        })
+        .setOrigin(0.5, 0)
+    );
+
+    const tags = [monster.guard ? "GUARD" : "", fresh ? "NEW" : ""].filter(Boolean).join(" · ");
+    if (tags) {
+      c.add(
+        this.add
+          .text(MONSTER_W / 2, MONSTER_H - 48, tags, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "800", color: monster.guard ? "#8fd3ff" : "#ffe9a8" })
+          .setOrigin(0.5, 0)
+      );
+    }
+
+    const barX = 5;
+    const barW = MONSTER_W - 10;
+    const barY = MONSTER_H - 34;
+    const bar = this.add.graphics();
+    bar.fillStyle(COLORS.meterTrack, 1);
+    bar.fillRoundedRect(barX, barY, barW, 12, 5);
+    const pct = Phaser.Math.Clamp(monster.hp / monster.maxHp, 0, 1);
+    if (pct > 0) {
+      bar.fillStyle(hpColor(pct), 1);
+      bar.fillRoundedRect(barX, barY, barW * pct, 12, Math.min(5, (barW * pct) / 2));
+    }
+    c.add(bar);
+    c.add(
+      this.add
+        .text(MONSTER_W / 2, barY + 6, `${Math.ceil(monster.hp)}/${monster.maxHp}`, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "9px",
+          fontStyle: "800",
+          color: TEXT.white,
+          stroke: "#000000",
+          strokeThickness: 2,
+        })
+        .setOrigin(0.5)
+    );
+    c.add(
+      this.add
+        .text(MONSTER_W / 2, MONSTER_H - 17, `ATK ${monster.atk} · SPD ${monster.speed}`, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "9px",
+          fontStyle: "700",
+          color: TEXT.white,
+        })
+        .setOrigin(0.5, 0)
+    );
+    if (fresh) c.setAlpha(0.8);
+    this.fieldContainer.add(c);
   }
 
   renderLog(): void {
