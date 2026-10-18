@@ -3,7 +3,7 @@
 // resolves the round once both players have picked.
 
 import { BattleScene, type BattleSceneData } from "./BattleScene.ts";
-import { isBattleOver, type Action } from "../model/engine.ts";
+import { isBattleOver, passAction, type Action } from "../model/engine.ts";
 import { deserializeFighter } from "../model/serialize.ts";
 import type { BattleView } from "../online/matchApi.ts";
 import type { RandomMatch, RandomMatchView } from "../online/randomMatch.ts";
@@ -36,6 +36,7 @@ export class RandomBattleScene extends BattleScene {
   pendingPick: string | null = null;
   errorMessage: string | null = null;
   opponentGone = false;
+  autoEnded = false; // already sent this round's turn when the timer ran out
   // What was planned when we locked in, to hand back if the server rejects it.
   planned: Pick<RandomBattleScene, "staged" | "stagedUltimate" | "stagedTargets" | "orders"> | null = null;
 
@@ -49,6 +50,7 @@ export class RandomBattleScene extends BattleScene {
     this.pendingPick = null;
     this.errorMessage = null;
     this.opponentGone = false;
+    this.autoEnded = false;
 
     const unsubscribe = [
       match.onView((view) => this.applyView(view)),
@@ -69,8 +71,15 @@ export class RandomBattleScene extends BattleScene {
           this.render();
         }
       }),
+      match.onConnectionChange(() => this.render()),
     ];
-    this.events.once("shutdown", () => unsubscribe.forEach((off) => off()));
+    // Countdown tick. A plain interval, not this.time: the recap speed
+    // setting scales Phaser's clock.
+    const tick = window.setInterval(() => this.onTick(), 250);
+    this.events.once("shutdown", () => {
+      window.clearInterval(tick);
+      unsubscribe.forEach((off) => off());
+    });
     return toBattleView(match.latest!);
   }
 
@@ -93,7 +102,28 @@ export class RandomBattleScene extends BattleScene {
   }
 
   override canAct(): boolean {
-    return super.canAct() && !this.battle.myReady && !this.pendingPick && !this.match.closed;
+    return super.canAct() && !this.battle.myReady && !this.pendingPick && !this.match.closed && !this.match.reconnecting;
+  }
+
+  // Whole seconds left until the local deadline, or null.
+  private secondsLeft(deadline: number | null): number | null {
+    return deadline === null ? null : Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  }
+
+  // Runs 4x a second: refresh the countdowns, and end the turn for the
+  // player when time runs out (with whatever they had planned, if it can
+  // still be paid for; otherwise a pass).
+  private onTick(): void {
+    if (!this.statusText?.active || isBattleOver(this.battle)) return;
+    const left = this.match.turnDeadline === null ? null : this.match.turnDeadline - Date.now();
+    if (left !== null && left <= 0 && !this.autoEnded && this.canAct()) {
+      this.autoEnded = true;
+      this.handHint = null;
+      this.onEndTurnClick();
+      if (!this.pendingPick) this.commitAction(passAction()); // plan couldn't be paid for
+      return;
+    }
+    this.statusText.setText(this.statusMessage());
   }
 
   override commitAction(action: Action): void {
@@ -129,13 +159,18 @@ export class RandomBattleScene extends BattleScene {
     const b = this.battle;
     if (b.draw) return `Draw! Press "Leave" to go back.`;
     if (b.winner) return `${b.winner === b.player ? "You win!" : "Your opponent wins."} Press "Leave" to go back.`;
+    if (this.match.reconnecting) return `Round ${b.round} — Connection lost. Reconnecting…`;
+    const opponentLeft = this.secondsLeft(this.match.opponentDeadline);
+    if (opponentLeft !== null) return `Round ${b.round} — Your opponent disconnected. They have ${opponentLeft}s to come back.`;
     if (this.errorMessage) return `Round ${b.round} — ${this.errorMessage}`;
+    const turnLeft = this.secondsLeft(this.match.turnDeadline);
+    const clock = turnLeft === null ? "" : ` (${turnLeft}s)`;
     if (this.pendingPick || b.myReady) {
       const what = this.pendingPick ?? "your move";
-      return `Round ${b.round} — you locked in ${what}. ${b.opponentReady ? "Resolving…" : "Waiting for your opponent…"}`;
+      return `Round ${b.round} — you locked in ${what}. ${b.opponentReady ? "Resolving…" : `Waiting for your opponent…${clock}`}`;
     }
-    if (this.handHint) return `Round ${b.round} — ${this.handHint}`;
-    return `Round ${b.round} — ${this.plannedAp()}/${b.player.maxAp} AP left. Play cards, then End turn. ${
+    if (this.handHint) return `Round ${b.round} — ${this.handHint}${clock}`;
+    return `Round ${b.round} — ${turnLeft === null ? "" : `${turnLeft}s · `}${this.plannedAp()}/${b.player.maxAp} AP left. Play cards, then End turn. ${
       b.opponentReady ? "Your opponent has already chosen." : "Your opponent is choosing at the same time."
     }`;
   }
@@ -146,7 +181,10 @@ export class RandomBattleScene extends BattleScene {
     const before = this.currentHp();
     this.battle = toBattleView(view);
     if (!this.battle.myReady) this.pendingPick = null;
-    if (this.battle.round > previous.round) this.planned = null;
+    if (this.battle.round > previous.round) {
+      this.planned = null;
+      this.autoEnded = false;
+    }
 
     // Replay the round if this update is the one that resolved it.
     const resolvedRound = this.battle.player.lastTurn?.round;

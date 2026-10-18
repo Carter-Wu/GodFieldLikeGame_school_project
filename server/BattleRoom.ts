@@ -1,8 +1,8 @@
 // Random-match PvP room. Colyseus fills each "battle" room with 2 players
 // (joinOrCreate), so the matchmaking itself is built in. The game rules are
 // the same src/model/* files the browser and the `game` Edge Function use.
-import { Room, type Client } from "@colyseus/core";
-import { createBattle, fromClientAction, resolveRound, isBattleOver } from "../src/model/engine.ts";
+import { Room, type Client, type Delayed } from "@colyseus/core";
+import { createBattle, fromClientAction, passAction, resolveRound, isBattleOver } from "../src/model/engine.ts";
 import type { Action, Battle, ClientAction, Fighter } from "../src/model/engine.ts";
 import { findClassById } from "../src/model/catalog.ts";
 import { buildDeckFromList, validateDeckList, type DeckListEntry } from "../src/model/decks.ts";
@@ -23,14 +23,21 @@ interface Seat {
   classDef: ClassDef;
   deckList: DeckListEntry[] | null;
   pick: Action | null;
+  reconnectBy: number | null; // while dropped: when the seat is given up (ms)
 }
 
 const RECONNECT_SECONDS = 30;
+const TURN_SECONDS = 30;
+// Extra time after the turn ends before the server passes for a player, so a
+// turn the browser auto-sends at 0s still arrives in time.
+const TURN_GRACE_MS = 2000;
 
 export class BattleRoom extends Room {
   maxClients = 2;
   private seats: Seat[] = [];
   private battle: Battle | null = null;
+  private turnEndsAt: number | null = null;
+  private turnTimer: Delayed | null = null;
 
   // Runs before onJoin: check the Supabase login and the chosen deck.
   async onAuth(_client: Client, options: JoinOptions) {
@@ -57,7 +64,7 @@ export class BattleRoom extends Room {
   }
 
   onJoin(client: Client, _options: JoinOptions, auth: { userId: string; classDef: ClassDef; deckList: DeckListEntry[] | null }) {
-    this.seats.push({ client, ...auth, pick: null });
+    this.seats.push({ client, ...auth, pick: null, reconnectBy: null });
     if (this.seats.length < 2) {
       client.send("waiting");
       return;
@@ -67,6 +74,7 @@ export class BattleRoom extends Room {
       playerDeck: p1.deckList ? buildDeckFromList(p1.deckList) : null,
       cpuDeck: p2.deckList ? buildDeckFromList(p2.deckList) : null,
     });
+    this.startTurnTimer();
     this.sendViews();
   }
 
@@ -81,34 +89,71 @@ export class BattleRoom extends Room {
       const picked = fromClientAction(fighter, opponent, action);
       if (!picked) return client.send("error", "You can't play that right now");
       seat.pick = picked;
-
-      const [p1, p2] = this.seats as [Seat, Seat];
-      if (!p1.pick || !p2.pick) return this.sendViews(); // shows "opponent has chosen"
-
-      resolveRound(this.battle, p1.pick, p2.pick);
-      p1.pick = p2.pick = null;
-      this.sendViews();
-      if (isBattleOver(this.battle)) this.disconnect();
+      this.resolveIfReady();
     });
   }
 
+  // Resolve the round once both players have locked in; otherwise just show
+  // "opponent has chosen".
+  private resolveIfReady(note?: string) {
+    const [p1, p2] = this.seats as [Seat, Seat];
+    if (!this.battle || !p1.pick || !p2.pick) return this.sendViews();
+
+    resolveRound(this.battle, p1.pick, p2.pick);
+    if (note) this.battle.log.unshift(note);
+    p1.pick = p2.pick = null;
+    if (isBattleOver(this.battle)) {
+      this.stopTurnTimer();
+      this.sendViews();
+      this.disconnect();
+      return;
+    }
+    this.startTurnTimer();
+    this.sendViews();
+  }
+
+  // Each round has TURN_SECONDS; whoever hasn't ended their turn by then
+  // passes (plays nothing).
+  private startTurnTimer() {
+    this.stopTurnTimer();
+    this.turnEndsAt = Date.now() + TURN_SECONDS * 1000;
+    this.turnTimer = this.clock.setTimeout(() => {
+      if (!this.battle || isBattleOver(this.battle)) return;
+      for (const seat of this.seats) seat.pick ??= passAction();
+      this.resolveIfReady("Time's up! Players who hadn't ended their turn passed.");
+    }, TURN_SECONDS * 1000 + TURN_GRACE_MS);
+  }
+
+  private stopTurnTimer() {
+    this.turnTimer?.clear();
+    this.turnTimer = null;
+    this.turnEndsAt = null;
+  }
+
   // Lost connection (closed tab, wifi drop): hold the seat for a while.
+  // If they don't come back in time, onLeave counts it as a forfeit.
   async onDrop(client: Client) {
-    this.otherSeat(this.seatOf(client))?.client.send("opponentDisconnected", RECONNECT_SECONDS);
+    const seat = this.seatOf(client);
+    if (seat) seat.reconnectBy = Date.now() + RECONNECT_SECONDS * 1000;
+    if (this.battle) this.sendViews(); // the opponent sees the countdown
     await this.allowReconnection(client, RECONNECT_SECONDS);
   }
 
   onReconnect(client: Client) {
     const seat = this.seats.find((s) => s.client.sessionId === client.sessionId);
-    if (seat) seat.client = client;
-    this.otherSeat(seat)?.client.send("opponentReconnected");
+    if (seat) {
+      seat.client = client;
+      seat.reconnectBy = null;
+    }
     if (this.battle) this.sendViews();
   }
 
   // Left for good (pressed Leave, or didn't come back in time) = forfeit.
   onLeave(client: Client) {
     const seat = this.seatOf(client);
+    if (seat) seat.reconnectBy = null;
     if (!this.battle || isBattleOver(this.battle)) return;
+    this.stopTurnTimer();
     const other = this.otherSeat(seat);
     if (other) {
       this.battle.winner = this.fighterOf(other);
@@ -133,7 +178,10 @@ export class BattleRoom extends Room {
   // Each player sees both fighters' public stats but only their own hand.
   private sendViews() {
     const battle = this.battle!;
+    const now = Date.now();
     for (const seat of this.seats) {
+      if (seat.reconnectBy !== null) continue; // dropped: gets a fresh view on reconnect
+      const other = this.otherSeat(seat);
       const me = this.fighterOf(seat);
       const opponent = me === battle.player ? battle.cpu : battle.player;
       seat.client.send("state", {
@@ -143,7 +191,10 @@ export class BattleRoom extends Room {
         log: battle.log,
         over: isBattleOver(battle),
         myReady: seat.pick !== null,
-        opponentReady: this.otherSeat(seat)?.pick != null,
+        opponentReady: other?.pick != null,
+        // Time left, not a timestamp, so the browser's clock doesn't matter.
+        turnMsLeft: this.turnEndsAt === null ? null : Math.max(0, this.turnEndsAt - now),
+        opponentReconnectMsLeft: other?.reconnectBy == null ? null : Math.max(0, other.reconnectBy - now),
         result: battle.draw ? "draw" : battle.winner === me ? "win" : battle.winner ? "lose" : null,
       } satisfies RandomMatchView);
     }

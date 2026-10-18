@@ -12,4 +12,6 @@ export interface RandomMatchView {
   result: "win" | "lose" | "draw" | null;
   myReady: boolean;
   opponentReady: boolean;
+  turnMsLeft: number | null; // time left to end this turn; null when the match is over
+  opponentReconnectMsLeft: number | null; // set while the opponent is disconnected
 }
