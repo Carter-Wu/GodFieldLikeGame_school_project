@@ -359,3 +359,4 @@ includes in the public match state — so online matches need the `game` functio
 - Tests for the rules logic (currently just the in-browser checks in `model-demo.html`; now that
   the project has npm via Vite, a real test runner like Vitest is an option)
 
+testing
