@@ -77,7 +77,9 @@ const CPU_STRIP_Y = 44;
 const PLAYER_STRIP_Y = 414;
 const STATUS_Y = 176;
 
-// Left-column portraits: identity at a glance (icon + name + HP + ultimate).
+// Left-column portraits: the opponent's at the top (icon + name + HP +
+// ultimate), your class badge at the bottom (icon + name only -- your HP and
+// ultimate are on the player strip right beside it).
 const PORTRAIT_X = 16;
 const PORTRAIT_W = 208;
 const PORTRAIT_H = 200;
@@ -101,9 +103,6 @@ const CARD_H = 160;
 // clicking it again plays it onto your side of the arena, clicking anywhere
 // else puts it back.
 const FAN_OVERLAP = 44;
-
-// Your class badge, left of the hand (under the player strip): icon + name.
-const CLASS_BADGE = { x: 240, y: 550, w: 168, h: 158 };
 
 // The round End turn button, right of the hand, ringed by a yellow gauge:
 // one segment per AP this turn, lit = AP left, pulsing = about to be spent
@@ -270,7 +269,6 @@ export class BattleScene extends Phaser.Scene {
   cpuPanel!: Phaser.GameObjects.Container;
   playerPanel!: Phaser.GameObjects.Container;
   cpuPortrait!: Phaser.GameObjects.Container;
-  playerPortrait!: Phaser.GameObjects.Container;
   statusText!: Phaser.GameObjects.Text;
   handContainer!: Phaser.GameObjects.Container;
   endTurnRing!: Phaser.GameObjects.Container; // the AP ring around End turn
@@ -500,7 +498,6 @@ export class BattleScene extends Phaser.Scene {
     this.cpuPanel = this.add.container(0, 0);
     this.playerPanel = this.add.container(0, 0);
     this.cpuPortrait = this.add.container(0, 0);
-    this.playerPortrait = this.add.container(0, 0);
 
     this.statusText = textShadow(
       this.add
@@ -933,7 +930,6 @@ export class BattleScene extends Phaser.Scene {
     this.renderFighterPanel("cpu", this.cpuPanel, STRIP_X, CPU_STRIP_Y, STRIP_W, this.battle.cpu);
     this.renderFighterPanel("player", this.playerPanel, STRIP_X, PLAYER_STRIP_Y, STRIP_W, this.battle.player);
     this.drawPortrait(this.cpuPortrait, PORTRAIT_X, CPU_PORTRAIT_Y, this.battle.cpu, this.opponentLabel);
-    this.drawPortrait(this.playerPortrait, PORTRAIT_X, PLAYER_PORTRAIT_Y, this.battle.player, this.playerLabel);
     this.drawFields();
     this.drawSlots();
     this.renderHand(locked);
@@ -1351,31 +1347,31 @@ export class BattleScene extends Phaser.Scene {
     return 0;
   }
 
-  // The PLAYER portrait minus HP and ultimate: class icon and name only.
-  // Static (your class never changes), so drawn once in create().
+  // Your portrait, minus the HP and ultimate status the CPU one carries:
+  // class icon, side label and name. Static (your class never changes), so
+  // drawn once in create().
   drawClassBadge(): void {
-    const { x, y, w, h } = CLASS_BADGE;
     const player = this.battle.player;
-    const c = this.add.container(x, y);
-    c.add(roundedRect(this, w, h, COLORS.panel, 12));
+    const c = this.add.container(PORTRAIT_X, PLAYER_PORTRAIT_Y);
+    c.add(roundedRect(this, PORTRAIT_W, PORTRAIT_H, COLORS.panel, 12));
 
-    const cx = w / 2;
-    c.add(this.add.circle(cx, 52, 34, COLORS.meterTrack));
+    const cx = PORTRAIT_W / 2;
+    c.add(this.add.circle(cx, 72, 44, COLORS.meterTrack));
     const iconKey = classIconKey(player.classDef.id);
     if (this.textures.exists(iconKey)) {
-      c.add(this.add.image(cx, 52, iconKey).setDisplaySize(48, 48));
+      c.add(this.add.image(cx, 72, iconKey).setDisplaySize(62, 62));
     }
     c.add(
-      this.add.text(cx, 96, "PLAYER", { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: TEXT.muted }).setOrigin(0.5, 0)
+      this.add.text(cx, 130, this.playerLabel.toUpperCase(), { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: TEXT.muted }).setOrigin(0.5, 0)
     );
     c.add(
-      this.add.text(cx, 114, shortName(player.classDef.name), {
+      this.add.text(cx, 148, shortName(player.classDef.name), {
         fontFamily: FONT_FAMILY,
-        fontSize: "15px",
-        fontStyle: "700",
+        fontSize: "16px",
+        fontStyle: "800",
         color: TEXT.white,
         align: "center",
-        wordWrap: { width: w - 24 },
+        wordWrap: { width: PORTRAIT_W - 24 },
       }).setOrigin(0.5, 0)
     );
   }
@@ -1419,17 +1415,17 @@ export class BattleScene extends Phaser.Scene {
     // Picked cards have moved onto the arena slot.
     const stagedIds = new Set(this.staged.map((c) => c.id));
     const cards = this.battle.player.hand.filter((c) => !stagedIds.has(c.id) && c.id !== this.previewedCardId);
-    // Between the class badge on the left and the End turn ring on the right;
-    // a hand too big for that squeezes its overlap instead of covering them.
-    const minX = CLASS_BADGE.x + CLASS_BADGE.w + 8;
+    // Under the player strip, left of the End turn ring; a hand too big for
+    // that squeezes its overlap instead of covering the ring.
+    const minX = STRIP_X;
     const maxX = END_TURN.x - END_TURN_RING_R - END_TURN_RING_W / 2 - 12;
     let step = CARD_W - FAN_OVERLAP;
     if (cards.length > 1 && (cards.length - 1) * step + CARD_W > maxX - minX) {
       step = (maxX - minX - CARD_W) / (cards.length - 1);
     }
     const totalW = cards.length > 0 ? (cards.length - 1) * step + CARD_W : 0;
-    // Centered, but never over the class badge on the left (big hands shift right).
-    const x0 = Math.max(GAME_WIDTH / 2 - totalW / 2, minX);
+    // Centered on the board, shifted left if it would reach the ring.
+    const x0 = Math.max(minX, Math.min(GAME_WIDTH / 2 - totalW / 2, maxX - totalW));
     cards.forEach((card, i) => this.drawHandCard(card, x0 + i * step, locked));
   }
 
