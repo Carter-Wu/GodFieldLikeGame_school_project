@@ -171,6 +171,11 @@ const LOG_H = 628;
 // Wheel scroll step, px. Entries have variable (word-wrapped) heights, so
 // scrolling is a pixel offset, not a line index -- see renderLog.
 const LOG_SCROLL_STEP = 60;
+// The log's dark backing; the whole panel slides right by its width (plus a
+// margin) to hide, leaving just the toggle button in its top-right corner.
+const LOG_BOX = { x: LOG_X - 14, y: LOG_Y - 32, w: LOG_W + 28, h: LOG_H + 42 };
+const LOG_HIDE_DX = LOG_BOX.w + 16;
+const LOG_TOGGLE = { w: 28, h: 22 };
 const LOG_ENTRY_GAP = 6;
 
 // The band the round recap covers: status line, arena, player strip and hand.
@@ -221,6 +226,25 @@ function saveRecapSpeed(value: number): void {
     window.localStorage.setItem(RECAP_SPEED_KEY, String(value));
   } catch {
     // storage unavailable (private window etc.) -- just don't remember it
+  }
+}
+
+// Whether the battle log is slid away; also remembered per browser.
+const LOG_HIDDEN_KEY = "godfield.logHidden";
+
+function readLogHidden(): boolean {
+  try {
+    return window.localStorage.getItem(LOG_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveLogHidden(hidden: boolean): void {
+  try {
+    window.localStorage.setItem(LOG_HIDDEN_KEY, hidden ? "1" : "0");
+  } catch {
+    // storage unavailable -- just don't remember it
   }
 }
 
@@ -339,6 +363,8 @@ export class BattleScene extends Phaser.Scene {
   logMaxScrollIndex = 0; // max pixel offset (content height - box height)
   logTotalHeight = 0; // measured content height, set by renderLog
   logContainer!: Phaser.GameObjects.Container;
+  logPanel!: Phaser.GameObjects.Container; // everything in the log column, slid as one
+  logHidden = false;
   logScrollTrack!: Phaser.GameObjects.Rectangle;
   logScrollThumb!: Phaser.GameObjects.Rectangle;
 
@@ -504,9 +530,14 @@ export class BattleScene extends Phaser.Scene {
     this.addTorchLight();
 
     // Dark backing so the battle log reads cleanly over the hall's floor.
+    // The log's pieces keep their screen coordinates inside logPanel, which
+    // only ever moves sideways to hide / show the whole column.
+    this.logHidden = readLogHidden();
+    this.logPanel = this.add.container(this.logHidden ? LOG_HIDE_DX : 0, 0);
     const logBacking = this.add.graphics();
     logBacking.fillStyle(0x0b0d15, 0.72);
-    logBacking.fillRoundedRect(LOG_X - 14, LOG_Y - 32, LOG_W + 28, LOG_H + 42, 12);
+    logBacking.fillRoundedRect(LOG_BOX.x, LOG_BOX.y, LOG_BOX.w, LOG_BOX.h, 12);
+    this.logPanel.add(logBacking);
 
     textShadow(
       this.add
@@ -570,9 +601,9 @@ export class BattleScene extends Phaser.Scene {
       onClick: () => this.onLeave(),
     });
 
-    this.add
-      .text(LOG_X, LOG_Y - 24, "Battle log", { fontFamily: FONT_FAMILY, fontSize: "14px", color: TEXT.muted })
-      .setOrigin(0, 0);
+    this.logPanel.add(
+      this.add.text(LOG_X, LOG_Y - 24, "Battle log", { fontFamily: FONT_FAMILY, fontSize: "14px", color: TEXT.muted }).setOrigin(0, 0)
+    );
 
     // Scrolling is done by picking which slice of battle.log to render
     // (index 0 = newest) rather than by pixel-clipping a moving container --
@@ -591,6 +622,30 @@ export class BattleScene extends Phaser.Scene {
       .rectangle(LOG_X + LOG_W - 6, LOG_Y, 4, LOG_H, COLORS.restartHover)
       .setOrigin(0, 0)
       .setVisible(false);
+    this.logPanel.add([this.logContainer, this.logScrollTrack, this.logScrollThumb]);
+
+    // Hide / show toggle, fixed in the log's top-right corner whether the
+    // log is there or not: ▶ slides it off to the right, ◀ brings it back.
+    const toggleLabel = (): string => (this.logHidden ? "◀" : "▶");
+    const logToggle = createButton(
+      this,
+      LOG_BOX.x + LOG_BOX.w - LOG_TOGGLE.w - 6,
+      LOG_BOX.y + 6,
+      LOG_TOGGLE.w,
+      LOG_TOGGLE.h,
+      toggleLabel(),
+      {
+        color: COLORS.restart,
+        hoverColor: COLORS.restartHover,
+        onClick: () => {
+          this.logHidden = !this.logHidden;
+          saveLogHidden(this.logHidden);
+          (logToggle.container.getAt(1) as Phaser.GameObjects.Text).setText(toggleLabel());
+          this.tweens.killTweensOf(this.logPanel);
+          this.tweens.add({ targets: this.logPanel, x: this.logHidden ? LOG_HIDE_DX : 0, duration: 280, ease: "Cubic.easeInOut" });
+        },
+      }
+    );
 
     // Only scroll the log when the pointer is over it, so it doesn't hijack
     // wheel input over the rest of the page.
@@ -600,7 +655,7 @@ export class BattleScene extends Phaser.Scene {
       void _objects;
       void _dx;
       const { x, y } = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      if (x < LOG_X || x > LOG_X + LOG_W || y < LOG_Y || y > LOG_Y + LOG_H) {
+      if (this.logHidden || x < LOG_X || x > LOG_X + LOG_W || y < LOG_Y || y > LOG_Y + LOG_H) {
         return;
       }
       this.scrollLog(Math.sign(dy) * LOG_SCROLL_STEP);
