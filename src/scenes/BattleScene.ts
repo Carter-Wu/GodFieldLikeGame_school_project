@@ -26,7 +26,6 @@ import {
   isBattleOver,
   fighterName,
   FIELD_SIZE,
-  AP_RULES,
   STATUS_LABEL,
   type Action,
   type Battle,
@@ -61,7 +60,7 @@ import {
   useRenderScale,
   type Button,
 } from "./theme.ts";
-import { AP_GEM_COLOR, AP_SHORT_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
+import { AP_GEM_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
 import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
 // 1280x720 board layout: CPU strip top-center, player strip lower-center,
@@ -103,15 +102,8 @@ const CARD_H = 160;
 // else puts it back.
 const FAN_OVERLAP = 44;
 
-// The big AP gauge, left of the hand (under the player strip): AP left this
-// turn as a number and as gems -- bright = still yours, pulsing = about to
-// be spent on the card you're looking at, dark = spent on this turn's picks,
-// faint = not unlocked yet (max AP grows by one every round).
-const AP_PANEL = { x: 240, y: 550, w: 168, h: 158 };
-const AP_PIP_R = 11;
-const AP_PIP_STEP = 29;
-const AP_LIVE = 0x4fb3ff;
-const AP_SPENT = 0x1d3550;
+// Your class badge, left of the hand (under the player strip): icon + name.
+const CLASS_BADGE = { x: 240, y: 550, w: 168, h: 158 };
 
 // The round End turn button, right of the hand, ringed by a yellow gauge:
 // one segment per AP this turn, lit = AP left, pulsing = about to be spent
@@ -281,7 +273,6 @@ export class BattleScene extends Phaser.Scene {
   playerPortrait!: Phaser.GameObjects.Container;
   statusText!: Phaser.GameObjects.Text;
   handContainer!: Phaser.GameObjects.Container;
-  apContainer!: Phaser.GameObjects.Container; // the AP gauge beside the hand
   endTurnRing!: Phaser.GameObjects.Container; // the AP ring around End turn
   slotsContainer!: Phaser.GameObjects.Container;
   fieldContainer!: Phaser.GameObjects.Container;
@@ -517,9 +508,7 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5, 0)
     );
 
-    // Above the preview / targeting overlay (depth 900), so the gauge stays
-    // readable while you decide on a card.
-    this.apContainer = this.add.container(0, 0).setDepth(901);
+    this.drawClassBadge();
     this.handContainer = this.add.container(0, HAND_Y);
     this.fieldContainer = this.add.container(0, 0);
     this.slotsContainer = this.add.container(0, 0);
@@ -531,7 +520,9 @@ export class BattleScene extends Phaser.Scene {
     });
     this.ultimateButton = ultimate;
 
-    this.endTurnRing = this.add.container(0, 0);
+    // Above the preview / targeting overlay (depth 900), so the AP ring stays
+    // readable while you decide on a card.
+    this.endTurnRing = this.add.container(0, 0).setDepth(901);
     this.endTurnButton = createCircleButton(this, END_TURN.x, END_TURN.y, END_TURN.r, "End turn", {
       color: AP_GEM_COLOR,
       hoverColor: 0x4a95e0,
@@ -947,7 +938,6 @@ export class BattleScene extends Phaser.Scene {
     this.drawSlots();
     this.renderHand(locked);
     this.renderLog();
-    this.drawApGauge();
     this.drawEndTurnRing();
     this.drawPreview(locked);
     if (!locked) {
@@ -1361,85 +1351,32 @@ export class BattleScene extends Phaser.Scene {
     return 0;
   }
 
-  drawApGauge(): void {
-    const c = this.apContainer;
-    c.removeAll(true);
-    const { x, y, w, h } = AP_PANEL;
+  // The PLAYER portrait minus HP and ultimate: class icon and name only.
+  // Static (your class never changes), so drawn once in create().
+  drawClassBadge(): void {
+    const { x, y, w, h } = CLASS_BADGE;
     const player = this.battle.player;
-    const max = player.maxAp ?? player.ap;
-    const planning = !this.pendingTurn && this.canAct();
-    const left = planning ? this.plannedAp() : player.ap;
-    const preview = planning ? Math.min(left, this.pendingSpend()) : 0;
-    const short = planning && this.pendingSpend() > left;
+    const c = this.add.container(x, y);
+    c.add(roundedRect(this, w, h, COLORS.panel, 12));
 
-    const bg = this.add.graphics();
-    bg.fillStyle(0x0b1626, 0.92);
-    bg.fillRoundedRect(x, y, w, h, 12);
-    bg.lineStyle(2, short ? AP_SHORT_COLOR : AP_GEM_COLOR, 1);
-    bg.strokeRoundedRect(x, y, w, h, 12);
-    c.add(bg);
-
+    const cx = w / 2;
+    c.add(this.add.circle(cx, 52, 34, COLORS.meterTrack));
+    const iconKey = classIconKey(player.classDef.id);
+    if (this.textures.exists(iconKey)) {
+      c.add(this.add.image(cx, 52, iconKey).setDisplaySize(48, 48));
+    }
     c.add(
-      this.add
-        .text(x + w / 2, y + 8, "ACTION POINTS", { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: "#8fc8ff" })
-        .setOrigin(0.5, 0)
+      this.add.text(cx, 96, "PLAYER", { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: TEXT.muted }).setOrigin(0.5, 0)
     );
-    const big = this.add
-      .text(0, y + 22, String(left), {
-        fontFamily: FONT_FAMILY,
-        fontSize: "46px",
-        fontStyle: "900",
-        color: left === 0 ? "#7d8aa0" : TEXT.white,
-        stroke: "#000000",
-        strokeThickness: 4,
-      })
-      .setOrigin(0, 0);
-    const of = this.add
-      .text(0, y + 44, `/ ${max}`, { fontFamily: FONT_FAMILY, fontSize: "20px", fontStyle: "800", color: "#8fc8ff" })
-      .setOrigin(0, 0);
-    const total = big.width + 6 + of.width;
-    big.setX(x + w / 2 - total / 2);
-    of.setX(big.x + big.width + 6);
-    c.add([big, of]);
-
-    // Gems: 5 per row, AP_RULES.max in all.
-    for (let i = 0; i < AP_RULES.max; i++) {
-      const px = x + w / 2 + ((i % 5) - 2) * AP_PIP_STEP;
-      const py = y + 92 + Math.floor(i / 5) * AP_PIP_STEP;
-      const gem = this.add.graphics();
-      if (i < left - preview) {
-        gem.fillStyle(AP_LIVE, 1).fillCircle(px, py, AP_PIP_R);
-        gem.fillStyle(0xffffff, 0.55).fillCircle(px - 3, py - 3, AP_PIP_R * 0.35);
-      } else if (i < left) {
-        // About to be spent on the card being looked at.
-        gem.fillStyle(0xffd23f, 1).fillCircle(px, py, AP_PIP_R);
-        this.tweens.add({ targets: gem, alpha: 0.35, duration: 380, yoyo: true, repeat: -1 });
-        gem.once("destroy", () => this.tweens.killTweensOf(gem));
-      } else if (i < max) {
-        gem.fillStyle(AP_SPENT, 1).fillCircle(px, py, AP_PIP_R);
-        gem.lineStyle(2, 0x2f7fd0, 0.8).strokeCircle(px, py, AP_PIP_R);
-      } else {
-        gem.lineStyle(1.5, 0x3a4a60, 0.7).strokeCircle(px, py, AP_PIP_R - 3);
-      }
-      c.add(gem);
-    }
-
-    let note: string;
-    let color: string = TEXT.muted;
-    if (!planning) {
-      note = isBattleOver(this.battle) ? "" : "turn sent";
-    } else if (short) {
-      note = `needs ${this.pendingSpend()} AP — not enough`;
-      color = "#ff8a80";
-    } else if (preview > 0) {
-      note = `→ ${left - preview} AP after this`;
-      color = "#ffd23f";
-    } else {
-      const spent = max - left;
-      note = spent > 0 ? `${spent} AP planned this turn` : `next round: ${Math.min(AP_RULES.max, max + AP_RULES.growth)} max AP`;
-    }
     c.add(
-      this.add.text(x + w / 2, y + h - 16, note, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color }).setOrigin(0.5, 0)
+      this.add.text(cx, 114, shortName(player.classDef.name), {
+        fontFamily: FONT_FAMILY,
+        fontSize: "15px",
+        fontStyle: "700",
+        color: TEXT.white,
+        align: "center",
+        wordWrap: { width: w - 24 },
+      }).setOrigin(0.5, 0)
     );
   }
 
@@ -1482,16 +1419,16 @@ export class BattleScene extends Phaser.Scene {
     // Picked cards have moved onto the arena slot.
     const stagedIds = new Set(this.staged.map((c) => c.id));
     const cards = this.battle.player.hand.filter((c) => !stagedIds.has(c.id) && c.id !== this.previewedCardId);
-    // Between the AP gauge on the left and the End turn ring on the right;
+    // Between the class badge on the left and the End turn ring on the right;
     // a hand too big for that squeezes its overlap instead of covering them.
-    const minX = AP_PANEL.x + AP_PANEL.w + 8;
+    const minX = CLASS_BADGE.x + CLASS_BADGE.w + 8;
     const maxX = END_TURN.x - END_TURN_RING_R - END_TURN_RING_W / 2 - 12;
     let step = CARD_W - FAN_OVERLAP;
     if (cards.length > 1 && (cards.length - 1) * step + CARD_W > maxX - minX) {
       step = (maxX - minX - CARD_W) / (cards.length - 1);
     }
     const totalW = cards.length > 0 ? (cards.length - 1) * step + CARD_W : 0;
-    // Centered, but never over the AP gauge on the left (big hands shift right).
+    // Centered, but never over the class badge on the left (big hands shift right).
     const x0 = Math.max(GAME_WIDTH / 2 - totalW / 2, minX);
     cards.forEach((card, i) => this.drawHandCard(card, x0 + i * step, locked));
   }
