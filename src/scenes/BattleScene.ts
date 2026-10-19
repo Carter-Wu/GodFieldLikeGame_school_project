@@ -91,8 +91,7 @@ const PLAYER_STRIP_W = STRIP_X + STRIP_W - PLAYER_STRIP_X;
 const BUTTON_X = 24;
 const BUTTON_W = 176;
 const BUTTON_H = 40;
-const ULTIMATE_BUTTON_Y = 296;
-const LEAVE_BUTTON_Y = 346;
+const LEAVE_BUTTON_Y = 296;
 
 const HAND_Y = 548;
 const CARD_W = 112;
@@ -105,8 +104,13 @@ const CARD_H = 160;
 // else puts it back.
 const FAN_OVERLAP = 44;
 
-// Your class badge, under the player strip and left of the hand: icon + name.
+// Your class badge, under the player strip and left of the hand: icon + name,
+// ringed by a yellow gauge for the ultimate meter. Once it's full the badge
+// glows and pulses, and clicking it toggles the ultimate for this turn.
 const CLASS_BADGE = { x: PORTRAIT_X, y: HAND_Y, w: PORTRAIT_W, h: CARD_H };
+const BADGE_RADIUS = 12;
+const ULT_RING_W = 5;
+const ULT_RING_LIVE = 0xffd23f;
 
 // The round End turn button, right of the hand, ringed by a yellow gauge:
 // one segment per AP this turn, lit = AP left, pulsing = about to be spent
@@ -229,6 +233,43 @@ const RESULT: Record<"win" | "lose" | "draw", { title: string; color: number; sf
 const fmt = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 const shortName = (name: string): string => name.replace(/\s*\(.*\)\s*$/, "");
 
+// Points along a w x h rounded rectangle's edge, clockwise from top center,
+// covering `fraction` (0..1) of the way round -- for gauges drawn on a box.
+function roundedRectPath(w: number, h: number, r: number, fraction: number): Phaser.Math.Vector2[] {
+  // Every point after the start, in order; the last one is the start again.
+  const all: Phaser.Math.Vector2[] = [];
+  const corner = (cx: number, cy: number, from: number): void => {
+    for (let i = 0; i <= 8; i++) {
+      const a = from + (i / 8) * (Math.PI / 2);
+      all.push(new Phaser.Math.Vector2(cx + Math.cos(a) * r, cy + Math.sin(a) * r));
+    }
+  };
+  corner(w - r, r, -Math.PI / 2);
+  corner(w - r, h - r, 0);
+  corner(r, h - r, Math.PI / 2);
+  corner(r, r, Math.PI);
+  all.push(new Phaser.Math.Vector2(w / 2, 0));
+
+  const start = new Phaser.Math.Vector2(w / 2, 0);
+  let total = 0;
+  let prev = start;
+  for (const p of all) {
+    total += p.distance(prev);
+    prev = p;
+  }
+  let left = total * Math.max(0, Math.min(1, fraction));
+  const out = [start];
+  prev = start;
+  for (const p of all) {
+    if (left <= 0) break;
+    const seg = p.distance(prev);
+    out.push(seg <= left ? p : prev.clone().lerp(p, left / seg));
+    left -= seg;
+    prev = p;
+  }
+  return out;
+}
+
 function hpColor(pct: number): number {
   if (pct > 0.5) return 0x4caf6a;
   if (pct > 0.25) return 0xe0a030;
@@ -278,7 +319,7 @@ export class BattleScene extends Phaser.Scene {
   endTurnRing!: Phaser.GameObjects.Container; // the AP ring around End turn
   slotsContainer!: Phaser.GameObjects.Container;
   fieldContainer!: Phaser.GameObjects.Container;
-  ultimateButton!: Button;
+  classBadge!: Phaser.GameObjects.Container; // also the ultimate toggle
   endTurnButton!: Button;
   handHint: string | null = null; // why the card just clicked can't be played
   // This turn's plan, built up card by card: confirmed cards move from the
@@ -509,17 +550,10 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5, 0)
     );
 
-    this.drawClassBadge();
+    this.classBadge = this.add.container(CLASS_BADGE.x, CLASS_BADGE.y);
     this.handContainer = this.add.container(0, HAND_Y);
     this.fieldContainer = this.add.container(0, 0);
     this.slotsContainer = this.add.container(0, 0);
-
-    const ultimate = createButton(this, BUTTON_X, ULTIMATE_BUTTON_Y, BUTTON_W, BUTTON_H, "Use Ultimate", {
-      color: COLORS.ultimate,
-      hoverColor: COLORS.ultimateHover,
-      onClick: () => this.onUltimateClick(),
-    });
-    this.ultimateButton = ultimate;
 
     // Above the preview / targeting overlay (depth 900), so the AP ring stays
     // readable while you decide on a card.
@@ -939,6 +973,7 @@ export class BattleScene extends Phaser.Scene {
     this.renderHand(locked);
     this.renderLog();
     this.drawEndTurnRing();
+    this.drawClassBadge(locked);
     this.drawPreview(locked);
     if (!locked) {
       this.drawTargeting();
@@ -946,9 +981,6 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.statusText.setText(this.statusMessage());
-    const ultimateReady = !checkPlan(this.battle.player, this.staged, true, this.orders).problem;
-    this.ultimateButton.setEnabled(!locked && (this.stagedUltimate || ultimateReady));
-    (this.ultimateButton.container.getAt(1) as Phaser.GameObjects.Text).setText(this.stagedUltimate ? "Ultimate ✓ (undo)" : "Use Ultimate");
     this.endTurnButton.setEnabled(!locked);
     const plays = this.staged.length + (this.stagedUltimate ? 1 : 0) + this.orders.length;
     (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn\n(${plays})` : "End turn\n(pass)");
@@ -973,8 +1005,13 @@ export class BattleScene extends Phaser.Scene {
     const setHp = this.drawHpBar(container, key, fighter, w);
     this.drawStatChips(container, fighter, w);
     // Bottom row is shared: effect chips on the left, ultimate meter right.
-    this.drawEffectChips(container, fighter, w, 92, w * 0.55);
-    this.drawUltimateMeter(container, fighter, w * 0.58, 97, w - w * 0.58 - STRIP_PAD);
+    // Your meter is the ring around your class badge instead.
+    if (key === "player") {
+      this.drawEffectChips(container, fighter, w, 92, w - STRIP_PAD);
+    } else {
+      this.drawEffectChips(container, fighter, w, 92, w * 0.55);
+      this.drawUltimateMeter(container, fighter, w * 0.58, 97, w - w * 0.58 - STRIP_PAD);
+    }
 
     this.panelViews[key] = { x, y, w, h: STRIP_H, container, setHp };
   }
@@ -1351,26 +1388,61 @@ export class BattleScene extends Phaser.Scene {
     return 0;
   }
 
-  // Like the CPU portrait minus HP and ultimate (those are on your strip
-  // right above): class icon, side label and name. Static (your class never
-  // changes), so drawn once in create().
-  drawClassBadge(): void {
-    const { x, y, w, h } = CLASS_BADGE;
+  // Like the CPU portrait minus HP (that's on your strip right above): class
+  // icon, side label, name and ultimate status, with the meter as a yellow
+  // ring around the edge. Clicking it toggles the ultimate when it's usable.
+  drawClassBadge(locked: boolean): void {
+    const { w, h } = CLASS_BADGE;
+    const c = this.classBadge;
+    c.removeAll(true);
     const player = this.battle.player;
-    const c = this.add.container(x, y);
-    c.add(roundedRect(this, w, h, COLORS.panel, 12));
+    const cost = player.classDef.ultimate.cost;
+    const ready = canUseUltimate(player);
+    const usable = !locked && (this.stagedUltimate || !checkPlan(player, this.staged, true, this.orders).problem);
+
+    const bg = this.add.graphics();
+    bg.fillStyle(COLORS.panel, 1);
+    bg.fillRoundedRect(0, 0, w, h, BADGE_RADIUS);
+    if (ready) {
+      bg.fillStyle(ULT_RING_LIVE, this.stagedUltimate ? 0.22 : 0.12);
+      bg.fillRoundedRect(0, 0, w, h, BADGE_RADIUS);
+    }
+    c.add(bg);
+
+    // The meter: clockwise from top center, full = the whole edge.
+    const ring = this.add.graphics();
+    ring.lineStyle(ULT_RING_W, COLORS.meterTrack, 1);
+    ring.strokeRoundedRect(0, 0, w, h, BADGE_RADIUS);
+    const fill = Math.min(1, player.ultimateMeter / cost);
+    if (fill > 0) {
+      const points = roundedRectPath(w, h, BADGE_RADIUS, fill);
+      ring.lineStyle(ULT_RING_W, ULT_RING_LIVE, 1);
+      ring.strokePoints(points, fill >= 1, fill >= 1);
+    }
+    c.add(ring);
+
+    if (ready) {
+      // A copy of the full ring that grows out from the badge and fades, on
+      // repeat, centered so it scales from the middle.
+      const pulse = this.add.graphics({ x: w / 2, y: h / 2 });
+      pulse.lineStyle(ULT_RING_W, ULT_RING_LIVE, 1);
+      pulse.strokeRoundedRect(-w / 2, -h / 2, w, h, BADGE_RADIUS);
+      this.tweens.add({ targets: pulse, scaleX: 1.08, scaleY: 1.12, alpha: { from: 0.9, to: 0 }, duration: 1100, repeat: -1 });
+      pulse.once("destroy", () => this.tweens.killTweensOf(pulse));
+      c.add(pulse);
+    }
 
     const cx = w / 2;
-    c.add(this.add.circle(cx, 56, 38, COLORS.meterTrack));
+    c.add(this.add.circle(cx, 48, 32, COLORS.meterTrack));
     const iconKey = classIconKey(player.classDef.id);
     if (this.textures.exists(iconKey)) {
-      c.add(this.add.image(cx, 56, iconKey).setDisplaySize(52, 52));
+      c.add(this.add.image(cx, 48, iconKey).setDisplaySize(44, 44));
     }
     c.add(
-      this.add.text(cx, 104, this.playerLabel.toUpperCase(), { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: TEXT.muted }).setOrigin(0.5, 0)
+      this.add.text(cx, 86, this.playerLabel.toUpperCase(), { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: TEXT.muted }).setOrigin(0.5, 0)
     );
     c.add(
-      this.add.text(cx, 122, shortName(player.classDef.name), {
+      this.add.text(cx, 102, shortName(player.classDef.name), {
         fontFamily: FONT_FAMILY,
         fontSize: "15px",
         fontStyle: "700",
@@ -1379,6 +1451,22 @@ export class BattleScene extends Phaser.Scene {
         wordWrap: { width: w - 24 },
       }).setOrigin(0.5, 0)
     );
+    let ult: string;
+    if (this.stagedUltimate) ult = "ULTIMATE ✓ · click to undo";
+    else if (ready && usable) ult = "ULTIMATE READY · click";
+    else if (ready) ult = "ULTIMATE READY";
+    else ult = `ULT ${fmt(player.ultimateMeter)}/${cost}`;
+    c.add(
+      this.add
+        .text(cx, 130, ult, { fontFamily: FONT_FAMILY, fontSize: "12px", fontStyle: "800", color: ready ? "#ffd23f" : TEXT.muted })
+        .setOrigin(0.5, 0)
+    );
+
+    if (usable) {
+      bg.setInteractive(new Phaser.Geom.Rectangle(0, 0, w, h), Phaser.Geom.Rectangle.Contains);
+      bg.input!.cursor = "pointer";
+      bg.on("pointerdown", () => this.onUltimateClick());
+    }
   }
 
   drawEndTurnRing(): void {
