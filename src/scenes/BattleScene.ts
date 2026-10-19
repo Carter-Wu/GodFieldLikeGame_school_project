@@ -56,6 +56,7 @@ import {
   preloadBackground,
   roundedRect,
   createButton,
+  createCircleButton,
   textShadow,
   useRenderScale,
   type Button,
@@ -89,8 +90,7 @@ const BUTTON_X = 24;
 const BUTTON_W = 176;
 const BUTTON_H = 40;
 const ULTIMATE_BUTTON_Y = 296;
-const END_TURN_BUTTON_Y = 346;
-const LEAVE_BUTTON_Y = 396;
+const LEAVE_BUTTON_Y = 346;
 
 const HAND_Y = 548;
 const CARD_W = 112;
@@ -112,6 +112,16 @@ const AP_PIP_R = 11;
 const AP_PIP_STEP = 29;
 const AP_LIVE = 0x4fb3ff;
 const AP_SPENT = 0x1d3550;
+
+// The round End turn button, right of the hand, ringed by a yellow gauge:
+// one segment per AP this turn, lit = AP left, pulsing = about to be spent
+// on the card you're looking at, dark = spent on this turn's picks.
+const END_TURN = { x: STRIP_X + STRIP_W - 64, y: HAND_Y + CARD_H / 2, r: 44 };
+const END_TURN_RING_R = 53;
+const END_TURN_RING_W = 9;
+const END_TURN_RING_GAP = 0.06; // radians between segments
+const AP_RING_LIVE = 0xffd23f;
+const AP_RING_SPENT = 0x3a3220;
 const HOVER_LIFT = 14;
 const HOVER_SCALE = 1.12;
 const PREVIEW_SCALE = 1.45; // 160px card -> 232px, under a third of 720
@@ -272,6 +282,7 @@ export class BattleScene extends Phaser.Scene {
   statusText!: Phaser.GameObjects.Text;
   handContainer!: Phaser.GameObjects.Container;
   apContainer!: Phaser.GameObjects.Container; // the AP gauge beside the hand
+  endTurnRing!: Phaser.GameObjects.Container; // the AP ring around End turn
   slotsContainer!: Phaser.GameObjects.Container;
   fieldContainer!: Phaser.GameObjects.Container;
   ultimateButton!: Button;
@@ -520,7 +531,8 @@ export class BattleScene extends Phaser.Scene {
     });
     this.ultimateButton = ultimate;
 
-    this.endTurnButton = createButton(this, BUTTON_X, END_TURN_BUTTON_Y, BUTTON_W, BUTTON_H, "End turn", {
+    this.endTurnRing = this.add.container(0, 0);
+    this.endTurnButton = createCircleButton(this, END_TURN.x, END_TURN.y, END_TURN.r, "End turn", {
       color: AP_GEM_COLOR,
       hoverColor: 0x4a95e0,
       onClick: () => this.onEndTurnClick(),
@@ -936,6 +948,7 @@ export class BattleScene extends Phaser.Scene {
     this.renderHand(locked);
     this.renderLog();
     this.drawApGauge();
+    this.drawEndTurnRing();
     this.drawPreview(locked);
     if (!locked) {
       this.drawTargeting();
@@ -948,7 +961,7 @@ export class BattleScene extends Phaser.Scene {
     (this.ultimateButton.container.getAt(1) as Phaser.GameObjects.Text).setText(this.stagedUltimate ? "Ultimate ✓ (undo)" : "Use Ultimate");
     this.endTurnButton.setEnabled(!locked);
     const plays = this.staged.length + (this.stagedUltimate ? 1 : 0) + this.orders.length;
-    (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn (${plays})` : "End turn (pass)");
+    (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn\n(${plays})` : "End turn\n(pass)");
 
     if (isBattleOver(this.battle) && !this.recapPlaying) this.showResult();
   }
@@ -1430,15 +1443,56 @@ export class BattleScene extends Phaser.Scene {
     );
   }
 
+  drawEndTurnRing(): void {
+    const c = this.endTurnRing;
+    c.removeAll(true);
+    const player = this.battle.player;
+    const max = player.maxAp ?? player.ap;
+    if (max <= 0) return;
+    const planning = !this.pendingTurn && this.canAct();
+    const left = planning ? this.plannedAp() : player.ap;
+    const preview = planning ? Math.min(left, this.pendingSpend()) : 0;
+
+    // Starts at 12 o'clock and runs clockwise, like a timer.
+    const seg = (Math.PI * 2) / max;
+    const gap = max > 1 ? END_TURN_RING_GAP : 0;
+    const { x, y } = END_TURN;
+    for (let i = 0; i < max; i++) {
+      const start = -Math.PI / 2 + i * seg + gap / 2;
+      const end = start + seg - gap;
+      const arc = this.add.graphics();
+      if (i < left) {
+        arc.lineStyle(END_TURN_RING_W, AP_RING_LIVE, 1);
+        if (i >= left - preview) {
+          this.tweens.add({ targets: arc, alpha: 0.35, duration: 380, yoyo: true, repeat: -1 });
+          arc.once("destroy", () => this.tweens.killTweensOf(arc));
+        }
+      } else {
+        arc.lineStyle(END_TURN_RING_W, AP_RING_SPENT, 1);
+      }
+      arc.beginPath();
+      arc.arc(x, y, END_TURN_RING_R, start, end, false);
+      arc.strokePath();
+      c.add(arc);
+    }
+  }
+
   renderHand(locked: boolean): void {
     this.handContainer.removeAll(true);
     // Picked cards have moved onto the arena slot.
     const stagedIds = new Set(this.staged.map((c) => c.id));
     const cards = this.battle.player.hand.filter((c) => !stagedIds.has(c.id) && c.id !== this.previewedCardId);
-    const step = CARD_W - FAN_OVERLAP;
-    const totalW = cards.length * CARD_W - Math.max(0, cards.length - 1) * FAN_OVERLAP;
+    // Between the AP gauge on the left and the End turn ring on the right;
+    // a hand too big for that squeezes its overlap instead of covering them.
+    const minX = AP_PANEL.x + AP_PANEL.w + 8;
+    const maxX = END_TURN.x - END_TURN_RING_R - END_TURN_RING_W / 2 - 12;
+    let step = CARD_W - FAN_OVERLAP;
+    if (cards.length > 1 && (cards.length - 1) * step + CARD_W > maxX - minX) {
+      step = (maxX - minX - CARD_W) / (cards.length - 1);
+    }
+    const totalW = cards.length > 0 ? (cards.length - 1) * step + CARD_W : 0;
     // Centered, but never over the AP gauge on the left (big hands shift right).
-    const x0 = Math.max(GAME_WIDTH / 2 - totalW / 2, AP_PANEL.x + AP_PANEL.w + 8);
+    const x0 = Math.max(GAME_WIDTH / 2 - totalW / 2, minX);
     cards.forEach((card, i) => this.drawHandCard(card, x0 + i * step, locked));
   }
 
