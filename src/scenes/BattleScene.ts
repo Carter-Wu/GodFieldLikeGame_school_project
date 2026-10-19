@@ -189,6 +189,37 @@ const STAT_CHIPS: Array<{ key: StatKey; label: string; color: number }> = [
   { key: "atk", label: "ATK", color: 0xff6b5f },
 ];
 
+// Full names and explanations for the stat chips (hover / click).
+const STAT_INFO: Record<StatKey, { label: string; name: string; description: string }> = {
+  hp: { label: "HP", name: "Health", description: "How much damage you can take. Drop to 0 and you lose the battle." },
+  def: {
+    label: "DEF",
+    name: "Defense",
+    description: "Reduces incoming physical damage. Each hit loses DEF points of damage (after any guard), down to 0.",
+  },
+  mr: {
+    label: "MR",
+    name: "Magic Resistance",
+    description: "Reduces incoming magic damage. Each hit loses MR points of damage (after any guard), down to 0.",
+  },
+  er: {
+    label: "ER",
+    name: "Elemental Resistance",
+    description: "Reduces incoming element damage. Each hit loses ER points of damage (after any guard), down to 0.",
+  },
+  ur: {
+    label: "UR",
+    name: "Ultimate Recharge",
+    description: "How much your ultimate meter fills each round. Higher UR means you can use your ultimate sooner.",
+  },
+  atk: {
+    label: "ATK",
+    name: "Attack",
+    description: "Bonus damage added to every attack card you play (cards that deal 0 damage don't get it).",
+  },
+  crit: { label: "CRIT", name: "Critical Chance", description: "The chance for an attack to land a critical hit." },
+};
+
 const CHIP_COLOR = {
   guard: 0x2f6f8f,
   up: 0x3a8f5a,
@@ -334,6 +365,7 @@ export class BattleScene extends Phaser.Scene {
   panelViews: Record<string, RecapPanel> = {};
   recapSpeed = 1;
   resultLayer: Phaser.GameObjects.Container | null = null; // the end-of-game screen, once shown
+  statInfo: { key: StatKey; chip: Phaser.GameObjects.Container; layer: Phaser.GameObjects.Container } | null = null; // open stat explainer
   resultDismissed = false; // closed with "View board"
   cpuPanel!: Phaser.GameObjects.Container;
   playerPanel!: Phaser.GameObjects.Container;
@@ -1255,8 +1287,10 @@ export class BattleScene extends Phaser.Scene {
     };
   }
 
-  // DEF / MR / ER / UR, each with its change from the class's base value
-  // (synergies, buffs and debuffs) as a green/red arrow.
+  // DEF / MR / ER / UR / ATK, each with its change from the class's base
+  // value (synergies, buffs and debuffs) as a green/red arrow. Each chip
+  // pulses gently; hovering fills it with the stat's color and spells out the
+  // name, and clicking opens an info box above it (see toggleStatInfo).
   drawStatChips(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
     const pad = STRIP_PAD;
     const barW = w - pad * 2;
@@ -1275,25 +1309,30 @@ export class BattleScene extends Phaser.Scene {
     }
 
     STAT_CHIPS.forEach((chip, i) => {
-      const x = pad + i * (cw + gap);
+      // Each chip is its own container, centred on the chip so it pulses in
+      // place; children are drawn relative to its top-left corner (x, top).
+      const box = this.add.container(pad + i * (cw + gap) + cw / 2, y + h / 2);
+      container.add(box);
+      const x = -cw / 2;
+      const top = -h / 2;
       const delta = stats[chip.key] - (base[chip.key] ?? 0);
       const guard = guardByStat[chip.key];
       const g = this.add.graphics();
       g.fillStyle(guard ? 0x16384d : COLORS.meterTrack, 1);
-      g.fillRoundedRect(x, y, cw, h, 7);
+      g.fillRoundedRect(x, top, cw, h, 7);
       g.fillStyle(chip.color, 1);
-      g.fillRoundedRect(x, y, 4, h, { tl: 7, bl: 7, tr: 0, br: 0 });
+      g.fillRoundedRect(x, top, 4, h, { tl: 7, bl: 7, tr: 0, br: 0 });
       const outline = guard ? GUARD_COLOR : delta > 0 ? 0x6be39a : delta < 0 ? 0xff6b5f : null;
       if (outline !== null) {
         g.lineStyle(2, outline, 1);
-        g.strokeRoundedRect(x + 1, y + 1, cw - 2, h - 2, 7);
+        g.strokeRoundedRect(x + 1, top + 1, cw - 2, h - 2, 7);
       }
-      container.add(g);
+      box.add(g);
 
       if (guard) {
-        container.add(
+        box.add(
           this.add
-            .text(x + cw - 7, y + 4, `🛡${guardAmount(guard)}`, {
+            .text(x + cw - 7, top + 4, `🛡${guardAmount(guard)}`, {
               fontFamily: FONT_FAMILY,
               fontSize: "10px",
               fontStyle: "800",
@@ -1303,11 +1342,11 @@ export class BattleScene extends Phaser.Scene {
         );
       }
 
-      container.add(
-        this.add.text(x + 10, y + 5, chip.label, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "700", color: TEXT.muted })
+      box.add(
+        this.add.text(x + 10, top + 5, chip.label, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "700", color: TEXT.muted })
       );
-      container.add(
-        this.add.text(x + 10, y + 16, fmt(stats[chip.key]), {
+      box.add(
+        this.add.text(x + 10, top + 16, fmt(stats[chip.key]), {
           fontFamily: FONT_FAMILY,
           fontSize: "16px",
           fontStyle: "800",
@@ -1316,9 +1355,9 @@ export class BattleScene extends Phaser.Scene {
       );
 
       if (delta !== 0) {
-        container.add(
+        box.add(
           this.add
-            .text(x + cw - 6, y + h - 5, `${delta > 0 ? "▲" : "▼"}${fmt(Math.abs(delta))}`, {
+            .text(x + cw - 6, top + h - 5, `${delta > 0 ? "▲" : "▼"}${fmt(Math.abs(delta))}`, {
               fontFamily: FONT_FAMILY,
               fontSize: "11px",
               fontStyle: "700",
@@ -1327,7 +1366,142 @@ export class BattleScene extends Phaser.Scene {
             .setOrigin(1, 1)
         );
       }
+
+      // Hover: the stat color sweeps across the chip, then the full name fades in.
+      const fill = this.add.graphics();
+      const name = this.add
+        .text(0, 0, STAT_INFO[chip.key].name, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "13px",
+          fontStyle: "800",
+          color: "#11131c",
+          align: "center",
+          wordWrap: { width: cw - 12 },
+        })
+        .setOrigin(0.5)
+        .setAlpha(0);
+      box.add([fill, name]);
+      const sweep = { p: 0 };
+      const drawFill = (): void => {
+        fill.clear();
+        const fw = cw * sweep.p;
+        if (fw <= 0) return;
+        fill.fillStyle(chip.color, 1);
+        fill.fillRoundedRect(x, top, fw, h, Math.min(7, fw / 2));
+      };
+      const hoverTo = (p: number): void => {
+        this.tweens.killTweensOf([sweep, name]);
+        this.tweens.add({ targets: sweep, p, duration: 220, ease: "Cubic.easeOut", onUpdate: () => fill.active && drawFill() });
+        this.tweens.add({ targets: name, alpha: p, delay: p ? 120 : 0, duration: p ? 160 : 100 });
+      };
+
+      const pulse = this.tweens.add({
+        targets: box,
+        scale: 1.04,
+        duration: 900,
+        delay: i * 150,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      });
+      box.once("destroy", () => this.tweens.killTweensOf([box, sweep, name]));
+
+      const hit = this.add.zone(x, top, cw, h).setOrigin(0).setInteractive({ useHandCursor: true });
+      box.add(hit);
+      hit.on("pointerover", () => {
+        pulse.pause();
+        box.setScale(1.06);
+        hoverTo(1);
+      });
+      hit.on("pointerout", () => {
+        box.setScale(1);
+        pulse.resume();
+        hoverTo(0);
+      });
+      hit.on("pointerdown", () => this.toggleStatInfo(container, box, chip.key, chip.color, cw, h));
     });
+  }
+
+  // The info box a clicked stat chip opens directly above itself (below, on
+  // the CPU strip where there's no room above), joined to it by a short stem.
+  // Clicking the same chip (or the box) closes it; one is open at a time, and
+  // it goes away whenever the strip is rebuilt.
+  toggleStatInfo(
+    container: Phaser.GameObjects.Container,
+    chip: Phaser.GameObjects.Container,
+    key: StatKey,
+    color: number,
+    cw: number,
+    ch: number
+  ): void {
+    const wasOpen = this.statInfo?.key === key && this.statInfo.chip === chip;
+    this.closeStatInfo();
+    if (wasOpen) return;
+
+    const info = STAT_INFO[key];
+    const boxW = Math.max(cw, 240);
+    const textPad = 12;
+    const stem = 10;
+    const title = this.add.text(0, 0, `${info.label} — ${info.name}`, {
+      fontFamily: FONT_FAMILY,
+      fontSize: "13px",
+      fontStyle: "800",
+      color: Phaser.Display.Color.IntegerToColor(color).rgba,
+    });
+    const body = this.add.text(0, 0, info.description, {
+      fontFamily: FONT_FAMILY,
+      fontSize: "12px",
+      color: TEXT.white,
+      lineSpacing: 2,
+      wordWrap: { width: boxW - textPad * 2 },
+    });
+    const boxH = textPad * 2 + title.height + 6 + body.height;
+
+    // World position of the chip's top-centre; keep the box on screen.
+    const chipX = container.x + chip.x;
+    const chipTop = container.y + chip.y - ch / 2;
+    const left = Phaser.Math.Clamp(chipX - boxW / 2, 8, GAME_WIDTH - boxW - 8);
+    const above = chipTop - stem - boxH >= 8;
+    const top = above ? chipTop - stem - boxH : chipTop + ch + stem;
+
+    const layer = this.add.container(left, top).setDepth(900);
+    const g = this.add.graphics();
+    g.fillStyle(COLORS.panel, 0.97);
+    g.fillRoundedRect(0, 0, boxW, boxH, 10);
+    g.lineStyle(2, color, 1);
+    g.strokeRoundedRect(0, 0, boxW, boxH, 10);
+    // Stem connecting the box to the chip.
+    const sx = chipX - left;
+    g.fillStyle(color, 1);
+    if (above) {
+      g.fillRect(sx - 2, boxH, 4, stem);
+      g.fillTriangle(sx - 8, boxH - 1, sx + 8, boxH - 1, sx, boxH + 7);
+    } else {
+      g.fillRect(sx - 2, -stem, 4, stem);
+      g.fillTriangle(sx - 8, 1, sx + 8, 1, sx, -7);
+    }
+    title.setPosition(textPad, textPad);
+    body.setPosition(textPad, textPad + title.height + 6);
+    layer.add([g, title, body]);
+    g.setInteractive(new Phaser.Geom.Rectangle(0, 0, boxW, boxH), Phaser.Geom.Rectangle.Contains);
+    g.on("pointerdown", () => this.closeStatInfo());
+
+    // Grow out of the chip.
+    layer.setAlpha(0).setY(top + (above ? 12 : -12));
+    this.tweens.add({ targets: layer, alpha: 1, y: top, duration: 180, ease: "Cubic.easeOut" });
+
+    this.statInfo = { key, chip, layer };
+    chip.once("destroy", () => {
+      if (this.statInfo?.layer === layer) this.closeStatInfo();
+    });
+  }
+
+  closeStatInfo(): void {
+    if (!this.statInfo) return;
+    const { layer } = this.statInfo;
+    this.statInfo = null;
+    this.tweens.killTweensOf(layer);
+    layer.destroy(true);
   }
 
   // One row of chips: synergy progress, active defends, temporary
