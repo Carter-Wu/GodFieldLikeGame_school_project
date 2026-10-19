@@ -1000,9 +1000,10 @@ export class BattleScene extends Phaser.Scene {
     container.setPosition(x, y);
     container.add(roundedRect(this, w, STRIP_H, COLORS.panel, 12));
 
-    this.drawPanelHeader(container, fighter, w);
-    this.drawGuardFrame(container, fighter, w);
-    const setHp = this.drawHpBar(container, key, fighter, w);
+    // Header row: name, AP pill, HP bar, GUARD badge (while one's up), Hand N.
+    const header = this.drawPanelHeader(container, fighter, w);
+    const hpRight = this.drawGuardFrame(container, fighter, w, header.right);
+    const setHp = this.drawHpBar(container, key, fighter, header.left, hpRight);
     this.drawStatChips(container, fighter, w);
     // Bottom row is shared: effect chips on the left, ultimate meter right.
     // Your meter is the ring around your class badge instead.
@@ -1067,7 +1068,8 @@ export class BattleScene extends Phaser.Scene {
     );
   }
 
-  drawPanelHeader(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
+  // Returns the gap left between the AP pill and "Hand N" (for the HP bar).
+  drawPanelHeader(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): { left: number; right: number } {
     const name = this.add.text(STRIP_PAD, 6, shortName(fighter.classDef.name), {
       fontFamily: FONT_FAMILY,
       fontSize: "14px",
@@ -1090,18 +1092,19 @@ export class BattleScene extends Phaser.Scene {
     container.add([pill, apText]);
 
     const handCount = fighter.handCount ?? fighter.hand.length;
-    container.add(
-      this.add
-        .text(w - STRIP_PAD, 8, `Hand ${handCount}`, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
-        .setOrigin(1, 0)
-    );
+    const hand = this.add
+      .text(w - STRIP_PAD, 8, `Hand ${handCount}`, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
+      .setOrigin(1, 0);
+    container.add(hand);
+    return { left: pillX + pillW + 10, right: w - STRIP_PAD - hand.width - 12 };
   }
 
   // While a defend card is up: a pulsing blue frame around the strip and a
-  // "GUARD +5" badge in the header, so it's obvious at a glance.
-  drawGuardFrame(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
+  // "GUARD +5" badge in the header ending at `right`, so it's obvious at a
+  // glance. Returns where the header's free space now ends.
+  drawGuardFrame(container: Phaser.GameObjects.Container, fighter: Fighter, w: number, right: number): number {
     const guards = Object.values(fighter.activeDefends);
-    if (guards.length === 0) return;
+    if (guards.length === 0) return right;
 
     const frame = this.add.graphics();
     frame.lineStyle(3, GUARD_COLOR, 1);
@@ -1121,8 +1124,8 @@ export class BattleScene extends Phaser.Scene {
     const iconSize = 14;
     const wBadge = text.width + iconSize + 22;
     const h = 22;
-    const x = w - STRIP_PAD - 58 - wBadge; // left of "Hand N"
-    const y = 4;
+    const x = right - wBadge;
+    const y = 3;
     const pill = this.add.graphics();
     pill.fillStyle(GUARD_COLOR, 1);
     pill.fillRoundedRect(x, y, wBadge, h, h / 2);
@@ -1132,20 +1135,22 @@ export class BattleScene extends Phaser.Scene {
     }
     text.setPosition(x + 12 + iconSize, y + h / 2);
     container.add(text);
+    return x - 10;
   }
 
-  // Big HP bar. Returns setHp(value), which animates the bar to a new value
-  // (with a pale "ghost" of the lost HP that drains a moment later) -- the
-  // round recap calls it as each hit lands.
+  // HP bar in the header, from `left` to `right`. Returns setHp(value), which
+  // animates the bar to a new value (with a pale "ghost" of the lost HP that
+  // drains a moment later) -- the round recap calls it as each hit lands.
   drawHpBar(
     container: Phaser.GameObjects.Container,
     key: "player" | "cpu",
     fighter: Fighter,
-    w: number
+    left: number,
+    right: number
   ): (next: number) => void {
-    const pad = STRIP_PAD;
-    const barW = w - pad * 2;
-    const y = 28;
+    const pad = left;
+    const barW = right - left;
+    const y = 4;
     const h = 20;
     const track = this.add.graphics();
     track.fillStyle(COLORS.meterTrack, 1);
@@ -1200,8 +1205,8 @@ export class BattleScene extends Phaser.Scene {
   drawStatChips(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
     const pad = STRIP_PAD;
     const barW = w - pad * 2;
-    const y = 54;
-    const h = 32;
+    const y = 38;
+    const h = 38;
     const gap = 8;
     const cw = (barW - gap * (STAT_CHIPS.length - 1)) / STAT_CHIPS.length;
     const stats = computeCurrentStats(fighter);
@@ -1244,10 +1249,10 @@ export class BattleScene extends Phaser.Scene {
       }
 
       container.add(
-        this.add.text(x + 10, y + 3, chip.label, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "700", color: TEXT.muted })
+        this.add.text(x + 10, y + 5, chip.label, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "700", color: TEXT.muted })
       );
       container.add(
-        this.add.text(x + 10, y + 13, fmt(stats[chip.key]), {
+        this.add.text(x + 10, y + 16, fmt(stats[chip.key]), {
           fontFamily: FONT_FAMILY,
           fontSize: "16px",
           fontStyle: "800",
