@@ -20,6 +20,6 @@
     "noUnusedParameters": false,
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "scripts", "tests", "vite.config.js", "eslint.config.js"],
+  "include": ["src", "scripts", "tests", "server", "vite.config.js", "eslint.config.js"],
   "exclude": ["legacy", "dist", "supabase/functions", "node_modules"]
 }

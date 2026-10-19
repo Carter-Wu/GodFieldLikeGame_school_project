@@ -180,3 +180,51 @@ export function createButton(
 
   return { container, setEnabled };
 }
+
+// createButton's round sibling: (x, y) is the center, the hit area is the
+// circle, and the label (index 1, same as createButton) can be multi-line.
+export function createCircleButton(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  r: number,
+  text: string,
+  { color, hoverColor, onClick }: ButtonOptions
+): Button {
+  const container = scene.add.container(x, y);
+
+  const bg = scene.add.graphics();
+  const draw = (fill: number): void => {
+    bg.clear();
+    bg.fillStyle(fill, 1);
+    bg.fillCircle(0, 0, r);
+    bg.lineStyle(2, 0xffffff, 0.25);
+    bg.strokeCircle(0, 0, r - 1);
+  };
+  draw(color);
+  const hitArea = (): void => {
+    bg.setInteractive(new Phaser.Geom.Circle(0, 0, r), Phaser.Geom.Circle.Contains);
+  };
+  hitArea();
+
+  const label = scene.add
+    .text(0, 0, text, { fontFamily: FONT_FAMILY, fontSize: "15px", fontStyle: "800", color: TEXT.white, align: "center" })
+    .setOrigin(0.5);
+
+  container.add([bg, label]);
+  container.setData("enabled", true);
+
+  bg.on("pointerover", () => container.getData("enabled") && draw(hoverColor));
+  bg.on("pointerout", () => container.getData("enabled") && draw(color));
+  bg.on("pointerdown", () => container.getData("enabled") && onClick());
+
+  function setEnabled(enabled: boolean): void {
+    container.setData("enabled", enabled);
+    container.setAlpha(enabled ? 1 : 0.45);
+    draw(color);
+    if (enabled) hitArea();
+    else bg.disableInteractive();
+  }
+
+  return { container, setEnabled };
+}

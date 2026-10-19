@@ -26,7 +26,6 @@ import {
   isBattleOver,
   fighterName,
   FIELD_SIZE,
-  AP_RULES,
   STATUS_LABEL,
   type Action,
   type Battle,
@@ -56,11 +55,12 @@ import {
   preloadBackground,
   roundedRect,
   createButton,
+  createCircleButton,
   textShadow,
   useRenderScale,
   type Button,
 } from "./theme.ts";
-import { AP_GEM_COLOR, AP_SHORT_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
+import { AP_GEM_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
 import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
 // 1280x720 board layout: CPU strip top-center, player strip lower-center,
@@ -77,20 +77,21 @@ const CPU_STRIP_Y = 44;
 const PLAYER_STRIP_Y = 414;
 const STATUS_Y = 176;
 
-// Left-column portraits: identity at a glance (icon + name + HP + ultimate).
+// Left-column portrait for the opponent: identity at a glance (icon + name +
+// HP + ultimate). You don't get one: your strip runs the full width from the
+// left column instead, with your class badge under its left end.
 const PORTRAIT_X = 16;
 const PORTRAIT_W = 208;
 const PORTRAIT_H = 200;
 const CPU_PORTRAIT_Y = 44;
-const PLAYER_PORTRAIT_Y = 476;
+const PLAYER_STRIP_X = PORTRAIT_X;
+const PLAYER_STRIP_W = STRIP_X + STRIP_W - PLAYER_STRIP_X;
 
 // Left-column buttons, between the portraits.
 const BUTTON_X = 24;
 const BUTTON_W = 176;
 const BUTTON_H = 40;
-const ULTIMATE_BUTTON_Y = 296;
-const END_TURN_BUTTON_Y = 346;
-const LEAVE_BUTTON_Y = 396;
+const LEAVE_BUTTON_Y = 296;
 
 const HAND_Y = 548;
 const CARD_W = 112;
@@ -103,15 +104,23 @@ const CARD_H = 160;
 // else puts it back.
 const FAN_OVERLAP = 44;
 
-// The big AP gauge, left of the hand (under the player strip): AP left this
-// turn as a number and as gems -- bright = still yours, pulsing = about to
-// be spent on the card you're looking at, dark = spent on this turn's picks,
-// faint = not unlocked yet (max AP grows by one every round).
-const AP_PANEL = { x: 240, y: 550, w: 168, h: 158 };
-const AP_PIP_R = 11;
-const AP_PIP_STEP = 29;
-const AP_LIVE = 0x4fb3ff;
-const AP_SPENT = 0x1d3550;
+// Your class badge, under the player strip and left of the hand: icon + name,
+// ringed by a yellow gauge for the ultimate meter. Once it's full the badge
+// glows and pulses, and clicking it toggles the ultimate for this turn.
+const CLASS_BADGE = { x: PORTRAIT_X, y: HAND_Y, w: PORTRAIT_W, h: CARD_H };
+const BADGE_RADIUS = 12;
+const ULT_RING_W = 5;
+const ULT_RING_LIVE = 0xffd23f;
+
+// The round End turn button, right of the hand, ringed by a yellow gauge:
+// one segment per AP this turn, lit = AP left, pulsing = about to be spent
+// on the card you're looking at, dark = spent on this turn's picks.
+const END_TURN = { x: STRIP_X + STRIP_W - 64, y: HAND_Y + CARD_H / 2, r: 44 };
+const END_TURN_RING_R = 53;
+const END_TURN_RING_W = 9;
+const END_TURN_RING_GAP = 0.06; // radians between segments
+const AP_RING_LIVE = 0xffd23f;
+const AP_RING_SPENT = 0x3a3220;
 const HOVER_LIFT = 14;
 const HOVER_SCALE = 1.12;
 const PREVIEW_SCALE = 1.45; // 160px card -> 232px, under a third of 720
@@ -162,6 +171,11 @@ const LOG_H = 628;
 // Wheel scroll step, px. Entries have variable (word-wrapped) heights, so
 // scrolling is a pixel offset, not a line index -- see renderLog.
 const LOG_SCROLL_STEP = 60;
+// The log's dark backing; the whole panel slides right by its width (plus a
+// margin) to hide, leaving just the toggle button in its top-right corner.
+const LOG_BOX = { x: LOG_X - 14, y: LOG_Y - 32, w: LOG_W + 28, h: LOG_H + 42 };
+const LOG_HIDE_DX = LOG_BOX.w + 16;
+const LOG_TOGGLE = { w: 28, h: 22 };
 const LOG_ENTRY_GAP = 6;
 
 // The band the round recap covers: status line, arena, player strip and hand.
@@ -174,6 +188,37 @@ const STAT_CHIPS: Array<{ key: StatKey; label: string; color: number }> = [
   { key: "ur", label: "UR", color: 0xffe066 },
   { key: "atk", label: "ATK", color: 0xff6b5f },
 ];
+
+// Full names and explanations for the stat chips (hover / click).
+const STAT_INFO: Record<StatKey, { label: string; name: string; description: string }> = {
+  hp: { label: "HP", name: "Health", description: "How much damage you can take. Drop to 0 and you lose the battle." },
+  def: {
+    label: "DEF",
+    name: "Defense",
+    description: "Reduces incoming physical damage. Each hit loses DEF points of damage (after any guard), down to 0.",
+  },
+  mr: {
+    label: "MR",
+    name: "Magic Resistance",
+    description: "Reduces incoming magic damage. Each hit loses MR points of damage (after any guard), down to 0.",
+  },
+  er: {
+    label: "ER",
+    name: "Elemental Resistance",
+    description: "Reduces incoming element damage. Each hit loses ER points of damage (after any guard), down to 0.",
+  },
+  ur: {
+    label: "UR",
+    name: "Ultimate Recharge",
+    description: "How much your ultimate meter fills each round. Higher UR means you can use your ultimate sooner.",
+  },
+  atk: {
+    label: "ATK",
+    name: "Attack",
+    description: "Bonus damage added to every attack card you play (cards that deal 0 damage don't get it).",
+  },
+  crit: { label: "CRIT", name: "Critical Chance", description: "The chance for an attack to land a critical hit." },
+};
 
 const CHIP_COLOR = {
   guard: 0x2f6f8f,
@@ -215,6 +260,25 @@ function saveRecapSpeed(value: number): void {
   }
 }
 
+// Whether the battle log is slid away; also remembered per browser.
+const LOG_HIDDEN_KEY = "godfield.logHidden";
+
+function readLogHidden(): boolean {
+  try {
+    return window.localStorage.getItem(LOG_HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveLogHidden(hidden: boolean): void {
+  try {
+    window.localStorage.setItem(LOG_HIDDEN_KEY, hidden ? "1" : "0");
+  } catch {
+    // storage unavailable -- just don't remember it
+  }
+}
+
 const RESULT: Record<"win" | "lose" | "draw", { title: string; color: number; sfx: string }> = {
   win: { title: "VICTORY", color: 0xffd23f, sfx: "victory" },
   lose: { title: "DEFEAT", color: 0xff5a4f, sfx: "defeat" },
@@ -223,6 +287,43 @@ const RESULT: Record<"win" | "lose" | "draw", { title: string; color: number; sf
 
 const fmt = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 const shortName = (name: string): string => name.replace(/\s*\(.*\)\s*$/, "");
+
+// Points along a w x h rounded rectangle's edge, clockwise from top center,
+// covering `fraction` (0..1) of the way round -- for gauges drawn on a box.
+function roundedRectPath(w: number, h: number, r: number, fraction: number): Phaser.Math.Vector2[] {
+  // Every point after the start, in order; the last one is the start again.
+  const all: Phaser.Math.Vector2[] = [];
+  const corner = (cx: number, cy: number, from: number): void => {
+    for (let i = 0; i <= 8; i++) {
+      const a = from + (i / 8) * (Math.PI / 2);
+      all.push(new Phaser.Math.Vector2(cx + Math.cos(a) * r, cy + Math.sin(a) * r));
+    }
+  };
+  corner(w - r, r, -Math.PI / 2);
+  corner(w - r, h - r, 0);
+  corner(r, h - r, Math.PI / 2);
+  corner(r, r, Math.PI);
+  all.push(new Phaser.Math.Vector2(w / 2, 0));
+
+  const start = new Phaser.Math.Vector2(w / 2, 0);
+  let total = 0;
+  let prev = start;
+  for (const p of all) {
+    total += p.distance(prev);
+    prev = p;
+  }
+  let left = total * Math.max(0, Math.min(1, fraction));
+  const out = [start];
+  prev = start;
+  for (const p of all) {
+    if (left <= 0) break;
+    const seg = p.distance(prev);
+    out.push(seg <= left ? p : prev.clone().lerp(p, left / seg));
+    left -= seg;
+    prev = p;
+  }
+  return out;
+}
 
 function hpColor(pct: number): number {
   if (pct > 0.5) return 0x4caf6a;
@@ -264,17 +365,17 @@ export class BattleScene extends Phaser.Scene {
   panelViews: Record<string, RecapPanel> = {};
   recapSpeed = 1;
   resultLayer: Phaser.GameObjects.Container | null = null; // the end-of-game screen, once shown
+  statInfo: { key: StatKey; chip: Phaser.GameObjects.Container; layer: Phaser.GameObjects.Container } | null = null; // open stat explainer
   resultDismissed = false; // closed with "View board"
   cpuPanel!: Phaser.GameObjects.Container;
   playerPanel!: Phaser.GameObjects.Container;
   cpuPortrait!: Phaser.GameObjects.Container;
-  playerPortrait!: Phaser.GameObjects.Container;
   statusText!: Phaser.GameObjects.Text;
   handContainer!: Phaser.GameObjects.Container;
-  apContainer!: Phaser.GameObjects.Container; // the AP gauge beside the hand
+  endTurnRing!: Phaser.GameObjects.Container; // the AP ring around End turn
   slotsContainer!: Phaser.GameObjects.Container;
   fieldContainer!: Phaser.GameObjects.Container;
-  ultimateButton!: Button;
+  classBadge!: Phaser.GameObjects.Container; // also the ultimate toggle
   endTurnButton!: Button;
   handHint: string | null = null; // why the card just clicked can't be played
   // This turn's plan, built up card by card: confirmed cards move from the
@@ -294,6 +395,8 @@ export class BattleScene extends Phaser.Scene {
   logMaxScrollIndex = 0; // max pixel offset (content height - box height)
   logTotalHeight = 0; // measured content height, set by renderLog
   logContainer!: Phaser.GameObjects.Container;
+  logPanel!: Phaser.GameObjects.Container; // everything in the log column, slid as one
+  logHidden = false;
   logScrollTrack!: Phaser.GameObjects.Rectangle;
   logScrollThumb!: Phaser.GameObjects.Rectangle;
 
@@ -459,9 +562,14 @@ export class BattleScene extends Phaser.Scene {
     this.addTorchLight();
 
     // Dark backing so the battle log reads cleanly over the hall's floor.
+    // The log's pieces keep their screen coordinates inside logPanel, which
+    // only ever moves sideways to hide / show the whole column.
+    this.logHidden = readLogHidden();
+    this.logPanel = this.add.container(this.logHidden ? LOG_HIDE_DX : 0, 0);
     const logBacking = this.add.graphics();
     logBacking.fillStyle(0x0b0d15, 0.72);
-    logBacking.fillRoundedRect(LOG_X - 14, LOG_Y - 32, LOG_W + 28, LOG_H + 42, 12);
+    logBacking.fillRoundedRect(LOG_BOX.x, LOG_BOX.y, LOG_BOX.w, LOG_BOX.h, 12);
+    this.logPanel.add(logBacking);
 
     textShadow(
       this.add
@@ -498,7 +606,6 @@ export class BattleScene extends Phaser.Scene {
     this.cpuPanel = this.add.container(0, 0);
     this.playerPanel = this.add.container(0, 0);
     this.cpuPortrait = this.add.container(0, 0);
-    this.playerPortrait = this.add.container(0, 0);
 
     this.statusText = textShadow(
       this.add
@@ -506,21 +613,15 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5, 0)
     );
 
-    // Above the preview / targeting overlay (depth 900), so the gauge stays
-    // readable while you decide on a card.
-    this.apContainer = this.add.container(0, 0).setDepth(901);
+    this.classBadge = this.add.container(CLASS_BADGE.x, CLASS_BADGE.y);
     this.handContainer = this.add.container(0, HAND_Y);
     this.fieldContainer = this.add.container(0, 0);
     this.slotsContainer = this.add.container(0, 0);
 
-    const ultimate = createButton(this, BUTTON_X, ULTIMATE_BUTTON_Y, BUTTON_W, BUTTON_H, "Use Ultimate", {
-      color: COLORS.ultimate,
-      hoverColor: COLORS.ultimateHover,
-      onClick: () => this.onUltimateClick(),
-    });
-    this.ultimateButton = ultimate;
-
-    this.endTurnButton = createButton(this, BUTTON_X, END_TURN_BUTTON_Y, BUTTON_W, BUTTON_H, "End turn", {
+    // Above the preview / targeting overlay (depth 900), so the AP ring stays
+    // readable while you decide on a card.
+    this.endTurnRing = this.add.container(0, 0).setDepth(901);
+    this.endTurnButton = createCircleButton(this, END_TURN.x, END_TURN.y, END_TURN.r, "End turn", {
       color: AP_GEM_COLOR,
       hoverColor: 0x4a95e0,
       onClick: () => this.onEndTurnClick(),
@@ -532,9 +633,9 @@ export class BattleScene extends Phaser.Scene {
       onClick: () => this.onLeave(),
     });
 
-    this.add
-      .text(LOG_X, LOG_Y - 24, "Battle log", { fontFamily: FONT_FAMILY, fontSize: "14px", color: TEXT.muted })
-      .setOrigin(0, 0);
+    this.logPanel.add(
+      this.add.text(LOG_X, LOG_Y - 24, "Battle log", { fontFamily: FONT_FAMILY, fontSize: "14px", color: TEXT.muted }).setOrigin(0, 0)
+    );
 
     // Scrolling is done by picking which slice of battle.log to render
     // (index 0 = newest) rather than by pixel-clipping a moving container --
@@ -553,6 +654,30 @@ export class BattleScene extends Phaser.Scene {
       .rectangle(LOG_X + LOG_W - 6, LOG_Y, 4, LOG_H, COLORS.restartHover)
       .setOrigin(0, 0)
       .setVisible(false);
+    this.logPanel.add([this.logContainer, this.logScrollTrack, this.logScrollThumb]);
+
+    // Hide / show toggle, fixed in the log's top-right corner whether the
+    // log is there or not: ▶ slides it off to the right, ◀ brings it back.
+    const toggleLabel = (): string => (this.logHidden ? "◀" : "▶");
+    const logToggle = createButton(
+      this,
+      LOG_BOX.x + LOG_BOX.w - LOG_TOGGLE.w - 6,
+      LOG_BOX.y + 6,
+      LOG_TOGGLE.w,
+      LOG_TOGGLE.h,
+      toggleLabel(),
+      {
+        color: COLORS.restart,
+        hoverColor: COLORS.restartHover,
+        onClick: () => {
+          this.logHidden = !this.logHidden;
+          saveLogHidden(this.logHidden);
+          (logToggle.container.getAt(1) as Phaser.GameObjects.Text).setText(toggleLabel());
+          this.tweens.killTweensOf(this.logPanel);
+          this.tweens.add({ targets: this.logPanel, x: this.logHidden ? LOG_HIDE_DX : 0, duration: 280, ease: "Cubic.easeInOut" });
+        },
+      }
+    );
 
     // Only scroll the log when the pointer is over it, so it doesn't hijack
     // wheel input over the rest of the page.
@@ -562,7 +687,7 @@ export class BattleScene extends Phaser.Scene {
       void _objects;
       void _dx;
       const { x, y } = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-      if (x < LOG_X || x > LOG_X + LOG_W || y < LOG_Y || y > LOG_Y + LOG_H) {
+      if (this.logHidden || x < LOG_X || x > LOG_X + LOG_W || y < LOG_Y || y > LOG_Y + LOG_H) {
         return;
       }
       this.scrollLog(Math.sign(dy) * LOG_SCROLL_STEP);
@@ -928,14 +1053,14 @@ export class BattleScene extends Phaser.Scene {
     const locked = !this.canAct();
 
     this.renderFighterPanel("cpu", this.cpuPanel, STRIP_X, CPU_STRIP_Y, STRIP_W, this.battle.cpu);
-    this.renderFighterPanel("player", this.playerPanel, STRIP_X, PLAYER_STRIP_Y, STRIP_W, this.battle.player);
+    this.renderFighterPanel("player", this.playerPanel, PLAYER_STRIP_X, PLAYER_STRIP_Y, PLAYER_STRIP_W, this.battle.player);
     this.drawPortrait(this.cpuPortrait, PORTRAIT_X, CPU_PORTRAIT_Y, this.battle.cpu, this.opponentLabel);
-    this.drawPortrait(this.playerPortrait, PORTRAIT_X, PLAYER_PORTRAIT_Y, this.battle.player, this.playerLabel);
     this.drawFields();
     this.drawSlots();
     this.renderHand(locked);
     this.renderLog();
-    this.drawApGauge();
+    this.drawEndTurnRing();
+    this.drawClassBadge(locked);
     this.drawPreview(locked);
     if (!locked) {
       this.drawTargeting();
@@ -943,12 +1068,9 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.statusText.setText(this.statusMessage());
-    const ultimateReady = !checkPlan(this.battle.player, this.staged, true, this.orders).problem;
-    this.ultimateButton.setEnabled(!locked && (this.stagedUltimate || ultimateReady));
-    (this.ultimateButton.container.getAt(1) as Phaser.GameObjects.Text).setText(this.stagedUltimate ? "Ultimate ✓ (undo)" : "Use Ultimate");
     this.endTurnButton.setEnabled(!locked);
     const plays = this.staged.length + (this.stagedUltimate ? 1 : 0) + this.orders.length;
-    (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn (${plays})` : "End turn (pass)");
+    (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn\n(${plays})` : "End turn\n(pass)");
 
     if (isBattleOver(this.battle) && !this.recapPlaying) this.showResult();
   }
@@ -965,13 +1087,19 @@ export class BattleScene extends Phaser.Scene {
     container.setPosition(x, y);
     container.add(roundedRect(this, w, STRIP_H, COLORS.panel, 12));
 
-    this.drawPanelHeader(container, fighter, w);
-    this.drawGuardFrame(container, fighter, w);
-    const setHp = this.drawHpBar(container, key, fighter, w);
+    // Header row: name, AP pill, HP bar, GUARD badge (while one's up), Hand N.
+    const header = this.drawPanelHeader(container, fighter, w);
+    const hpRight = this.drawGuardFrame(container, fighter, w, header.right);
+    const setHp = this.drawHpBar(container, key, fighter, header.left, hpRight);
     this.drawStatChips(container, fighter, w);
     // Bottom row is shared: effect chips on the left, ultimate meter right.
-    this.drawEffectChips(container, fighter, w, 92, w * 0.55);
-    this.drawUltimateMeter(container, fighter, w * 0.58, 97, w - w * 0.58 - STRIP_PAD);
+    // Your meter is the ring around your class badge instead.
+    if (key === "player") {
+      this.drawEffectChips(container, fighter, w, 92, w - STRIP_PAD);
+    } else {
+      this.drawEffectChips(container, fighter, w, 92, w * 0.55);
+      this.drawUltimateMeter(container, fighter, w * 0.58, 97, w - w * 0.58 - STRIP_PAD);
+    }
 
     this.panelViews[key] = { x, y, w, h: STRIP_H, container, setHp };
   }
@@ -1027,7 +1155,8 @@ export class BattleScene extends Phaser.Scene {
     );
   }
 
-  drawPanelHeader(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
+  // Returns the gap left between the AP pill and "Hand N" (for the HP bar).
+  drawPanelHeader(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): { left: number; right: number } {
     const name = this.add.text(STRIP_PAD, 6, shortName(fighter.classDef.name), {
       fontFamily: FONT_FAMILY,
       fontSize: "14px",
@@ -1050,18 +1179,19 @@ export class BattleScene extends Phaser.Scene {
     container.add([pill, apText]);
 
     const handCount = fighter.handCount ?? fighter.hand.length;
-    container.add(
-      this.add
-        .text(w - STRIP_PAD, 8, `Hand ${handCount}`, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
-        .setOrigin(1, 0)
-    );
+    const hand = this.add
+      .text(w - STRIP_PAD, 8, `Hand ${handCount}`, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
+      .setOrigin(1, 0);
+    container.add(hand);
+    return { left: pillX + pillW + 10, right: w - STRIP_PAD - hand.width - 12 };
   }
 
   // While a defend card is up: a pulsing blue frame around the strip and a
-  // "GUARD +5" badge in the header, so it's obvious at a glance.
-  drawGuardFrame(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
+  // "GUARD +5" badge in the header ending at `right`, so it's obvious at a
+  // glance. Returns where the header's free space now ends.
+  drawGuardFrame(container: Phaser.GameObjects.Container, fighter: Fighter, w: number, right: number): number {
     const guards = Object.values(fighter.activeDefends);
-    if (guards.length === 0) return;
+    if (guards.length === 0) return right;
 
     const frame = this.add.graphics();
     frame.lineStyle(3, GUARD_COLOR, 1);
@@ -1081,8 +1211,8 @@ export class BattleScene extends Phaser.Scene {
     const iconSize = 14;
     const wBadge = text.width + iconSize + 22;
     const h = 22;
-    const x = w - STRIP_PAD - 58 - wBadge; // left of "Hand N"
-    const y = 4;
+    const x = right - wBadge;
+    const y = 3;
     const pill = this.add.graphics();
     pill.fillStyle(GUARD_COLOR, 1);
     pill.fillRoundedRect(x, y, wBadge, h, h / 2);
@@ -1092,20 +1222,22 @@ export class BattleScene extends Phaser.Scene {
     }
     text.setPosition(x + 12 + iconSize, y + h / 2);
     container.add(text);
+    return x - 10;
   }
 
-  // Big HP bar. Returns setHp(value), which animates the bar to a new value
-  // (with a pale "ghost" of the lost HP that drains a moment later) -- the
-  // round recap calls it as each hit lands.
+  // HP bar in the header, from `left` to `right`. Returns setHp(value), which
+  // animates the bar to a new value (with a pale "ghost" of the lost HP that
+  // drains a moment later) -- the round recap calls it as each hit lands.
   drawHpBar(
     container: Phaser.GameObjects.Container,
     key: "player" | "cpu",
     fighter: Fighter,
-    w: number
+    left: number,
+    right: number
   ): (next: number) => void {
-    const pad = STRIP_PAD;
-    const barW = w - pad * 2;
-    const y = 28;
+    const pad = left;
+    const barW = right - left;
+    const y = 4;
     const h = 20;
     const track = this.add.graphics();
     track.fillStyle(COLORS.meterTrack, 1);
@@ -1155,13 +1287,16 @@ export class BattleScene extends Phaser.Scene {
     };
   }
 
-  // DEF / MR / ER / UR, each with its change from the class's base value
-  // (synergies, buffs and debuffs) as a green/red arrow.
+  // DEF / MR / ER / UR / ATK, each with its change from the class's base
+  // value (synergies, buffs and debuffs) as a green/red arrow. Hovering a
+  // chip fills it with the stat's color, spells out the name and pulses a
+  // ring out from its edge (like the ready ultimate badge); clicking opens an
+  // info box above it (see toggleStatInfo).
   drawStatChips(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
     const pad = STRIP_PAD;
     const barW = w - pad * 2;
-    const y = 54;
-    const h = 32;
+    const y = 38;
+    const h = 38;
     const gap = 8;
     const cw = (barW - gap * (STAT_CHIPS.length - 1)) / STAT_CHIPS.length;
     const stats = computeCurrentStats(fighter);
@@ -1175,25 +1310,31 @@ export class BattleScene extends Phaser.Scene {
     }
 
     STAT_CHIPS.forEach((chip, i) => {
-      const x = pad + i * (cw + gap);
+      // Each chip is its own container, centred on the chip so its hover ring
+      // scales from the middle; children are drawn relative to its top-left
+      // corner (x, top).
+      const box = this.add.container(pad + i * (cw + gap) + cw / 2, y + h / 2);
+      container.add(box);
+      const x = -cw / 2;
+      const top = -h / 2;
       const delta = stats[chip.key] - (base[chip.key] ?? 0);
       const guard = guardByStat[chip.key];
       const g = this.add.graphics();
       g.fillStyle(guard ? 0x16384d : COLORS.meterTrack, 1);
-      g.fillRoundedRect(x, y, cw, h, 7);
+      g.fillRoundedRect(x, top, cw, h, 7);
       g.fillStyle(chip.color, 1);
-      g.fillRoundedRect(x, y, 4, h, { tl: 7, bl: 7, tr: 0, br: 0 });
+      g.fillRoundedRect(x, top, 4, h, { tl: 7, bl: 7, tr: 0, br: 0 });
       const outline = guard ? GUARD_COLOR : delta > 0 ? 0x6be39a : delta < 0 ? 0xff6b5f : null;
       if (outline !== null) {
         g.lineStyle(2, outline, 1);
-        g.strokeRoundedRect(x + 1, y + 1, cw - 2, h - 2, 7);
+        g.strokeRoundedRect(x + 1, top + 1, cw - 2, h - 2, 7);
       }
-      container.add(g);
+      box.add(g);
 
       if (guard) {
-        container.add(
+        box.add(
           this.add
-            .text(x + cw - 7, y + 4, `🛡${guardAmount(guard)}`, {
+            .text(x + cw - 7, top + 4, `🛡${guardAmount(guard)}`, {
               fontFamily: FONT_FAMILY,
               fontSize: "10px",
               fontStyle: "800",
@@ -1203,11 +1344,11 @@ export class BattleScene extends Phaser.Scene {
         );
       }
 
-      container.add(
-        this.add.text(x + 10, y + 3, chip.label, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "700", color: TEXT.muted })
+      box.add(
+        this.add.text(x + 10, top + 5, chip.label, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "700", color: TEXT.muted })
       );
-      container.add(
-        this.add.text(x + 10, y + 13, fmt(stats[chip.key]), {
+      box.add(
+        this.add.text(x + 10, top + 16, fmt(stats[chip.key]), {
           fontFamily: FONT_FAMILY,
           fontSize: "16px",
           fontStyle: "800",
@@ -1216,9 +1357,9 @@ export class BattleScene extends Phaser.Scene {
       );
 
       if (delta !== 0) {
-        container.add(
+        box.add(
           this.add
-            .text(x + cw - 6, y + h - 5, `${delta > 0 ? "▲" : "▼"}${fmt(Math.abs(delta))}`, {
+            .text(x + cw - 6, top + h - 5, `${delta > 0 ? "▲" : "▼"}${fmt(Math.abs(delta))}`, {
               fontFamily: FONT_FAMILY,
               fontSize: "11px",
               fontStyle: "700",
@@ -1227,7 +1368,148 @@ export class BattleScene extends Phaser.Scene {
             .setOrigin(1, 1)
         );
       }
+
+      // Hover: the stat color sweeps across the chip, then the full name fades in.
+      const fill = this.add.graphics();
+      const name = this.add
+        .text(0, 0, STAT_INFO[chip.key].name, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "13px",
+          fontStyle: "800",
+          color: "#11131c",
+          align: "center",
+          wordWrap: { width: cw - 12 },
+        })
+        .setOrigin(0.5)
+        .setAlpha(0);
+      box.add([fill, name]);
+      const sweep = { p: 0 };
+      const drawFill = (): void => {
+        fill.clear();
+        const fw = cw * sweep.p;
+        if (fw <= 0) return;
+        fill.fillStyle(chip.color, 1);
+        fill.fillRoundedRect(x, top, fw, h, Math.min(7, fw / 2));
+      };
+      const hoverTo = (p: number): void => {
+        this.tweens.killTweensOf([sweep, name]);
+        this.tweens.add({ targets: sweep, p, duration: 220, ease: "Cubic.easeOut", onUpdate: () => fill.active && drawFill() });
+        this.tweens.add({ targets: name, alpha: p, delay: p ? 120 : 0, duration: p ? 160 : 100 });
+      };
+
+      // While hovered: a copy of the chip's outline grows out ~8px and fades,
+      // on repeat (the same pulse as the ready ultimate badge).
+      const ring = this.add.graphics().setVisible(false);
+      ring.lineStyle(3, chip.color, 1);
+      ring.strokeRoundedRect(x, top, cw, h, 7);
+      box.add(ring);
+      const pulse = this.tweens.add({
+        targets: ring,
+        scaleX: { from: 1, to: 1 + 16 / cw },
+        scaleY: { from: 1, to: 1 + 16 / h },
+        alpha: { from: 0.9, to: 0 },
+        duration: 1100,
+        repeat: -1,
+        paused: true,
+      });
+      box.once("destroy", () => this.tweens.killTweensOf([ring, sweep, name]));
+
+      const hit = this.add.zone(x, top, cw, h).setOrigin(0).setInteractive({ useHandCursor: true });
+      box.add(hit);
+      hit.on("pointerover", () => {
+        ring.setVisible(true);
+        pulse.restart();
+        hoverTo(1);
+      });
+      hit.on("pointerout", () => {
+        pulse.pause();
+        ring.setVisible(false);
+        hoverTo(0);
+      });
+      hit.on("pointerdown", () => this.toggleStatInfo(container, box, chip.key, chip.color, cw, h));
     });
+  }
+
+  // The info box a clicked stat chip opens directly above itself (below, on
+  // the CPU strip where there's no room above), joined to it by a short stem.
+  // Clicking the same chip (or the box) closes it; one is open at a time, and
+  // it goes away whenever the strip is rebuilt.
+  toggleStatInfo(
+    container: Phaser.GameObjects.Container,
+    chip: Phaser.GameObjects.Container,
+    key: StatKey,
+    color: number,
+    cw: number,
+    ch: number
+  ): void {
+    const wasOpen = this.statInfo?.key === key && this.statInfo.chip === chip;
+    this.closeStatInfo();
+    if (wasOpen) return;
+
+    const info = STAT_INFO[key];
+    const boxW = Math.max(cw, 240);
+    const textPad = 12;
+    const stem = 10;
+    const title = this.add.text(0, 0, `${info.label} — ${info.name}`, {
+      fontFamily: FONT_FAMILY,
+      fontSize: "13px",
+      fontStyle: "800",
+      color: Phaser.Display.Color.IntegerToColor(color).rgba,
+    });
+    const body = this.add.text(0, 0, info.description, {
+      fontFamily: FONT_FAMILY,
+      fontSize: "12px",
+      color: TEXT.white,
+      lineSpacing: 2,
+      wordWrap: { width: boxW - textPad * 2 },
+    });
+    const boxH = textPad * 2 + title.height + 6 + body.height;
+
+    // World position of the chip's top-centre; keep the box on screen.
+    const chipX = container.x + chip.x;
+    const chipTop = container.y + chip.y - ch / 2;
+    const left = Phaser.Math.Clamp(chipX - boxW / 2, 8, GAME_WIDTH - boxW - 8);
+    const above = chipTop - stem - boxH >= 8;
+    const top = above ? chipTop - stem - boxH : chipTop + ch + stem;
+
+    const layer = this.add.container(left, top).setDepth(900);
+    const g = this.add.graphics();
+    g.fillStyle(COLORS.panel, 0.97);
+    g.fillRoundedRect(0, 0, boxW, boxH, 10);
+    g.lineStyle(2, color, 1);
+    g.strokeRoundedRect(0, 0, boxW, boxH, 10);
+    // Stem connecting the box to the chip.
+    const sx = chipX - left;
+    g.fillStyle(color, 1);
+    if (above) {
+      g.fillRect(sx - 2, boxH, 4, stem);
+      g.fillTriangle(sx - 8, boxH - 1, sx + 8, boxH - 1, sx, boxH + 7);
+    } else {
+      g.fillRect(sx - 2, -stem, 4, stem);
+      g.fillTriangle(sx - 8, 1, sx + 8, 1, sx, -7);
+    }
+    title.setPosition(textPad, textPad);
+    body.setPosition(textPad, textPad + title.height + 6);
+    layer.add([g, title, body]);
+    g.setInteractive(new Phaser.Geom.Rectangle(0, 0, boxW, boxH), Phaser.Geom.Rectangle.Contains);
+    g.on("pointerdown", () => this.closeStatInfo());
+
+    // Grow out of the chip.
+    layer.setAlpha(0).setY(top + (above ? 12 : -12));
+    this.tweens.add({ targets: layer, alpha: 1, y: top, duration: 180, ease: "Cubic.easeOut" });
+
+    this.statInfo = { key, chip, layer };
+    chip.once("destroy", () => {
+      if (this.statInfo?.layer === layer) this.closeStatInfo();
+    });
+  }
+
+  closeStatInfo(): void {
+    if (!this.statInfo) return;
+    const { layer } = this.statInfo;
+    this.statInfo = null;
+    this.tweens.killTweensOf(layer);
+    layer.destroy(true);
   }
 
   // One row of chips: synergy progress, active defends, temporary
@@ -1348,86 +1630,119 @@ export class BattleScene extends Phaser.Scene {
     return 0;
   }
 
-  drawApGauge(): void {
-    const c = this.apContainer;
+  // Like the CPU portrait minus HP (that's on your strip right above): class
+  // icon, side label, name and ultimate status, with the meter as a yellow
+  // ring around the edge. Clicking it toggles the ultimate when it's usable.
+  drawClassBadge(locked: boolean): void {
+    const { w, h } = CLASS_BADGE;
+    const c = this.classBadge;
     c.removeAll(true);
-    const { x, y, w, h } = AP_PANEL;
+    const player = this.battle.player;
+    const cost = player.classDef.ultimate.cost;
+    const ready = canUseUltimate(player);
+    const usable = !locked && (this.stagedUltimate || !checkPlan(player, this.staged, true, this.orders).problem);
+
+    const bg = this.add.graphics();
+    bg.fillStyle(COLORS.panel, 1);
+    bg.fillRoundedRect(0, 0, w, h, BADGE_RADIUS);
+    if (ready) {
+      bg.fillStyle(ULT_RING_LIVE, this.stagedUltimate ? 0.22 : 0.12);
+      bg.fillRoundedRect(0, 0, w, h, BADGE_RADIUS);
+    }
+    c.add(bg);
+
+    // The meter: clockwise from top center, full = the whole edge.
+    const ring = this.add.graphics();
+    ring.lineStyle(ULT_RING_W, COLORS.meterTrack, 1);
+    ring.strokeRoundedRect(0, 0, w, h, BADGE_RADIUS);
+    const fill = Math.min(1, player.ultimateMeter / cost);
+    if (fill > 0) {
+      const points = roundedRectPath(w, h, BADGE_RADIUS, fill);
+      ring.lineStyle(ULT_RING_W, ULT_RING_LIVE, 1);
+      ring.strokePoints(points, fill >= 1, fill >= 1);
+    }
+    c.add(ring);
+
+    if (ready) {
+      // A copy of the full ring that grows out from the badge and fades, on
+      // repeat, centered so it scales from the middle.
+      const pulse = this.add.graphics({ x: w / 2, y: h / 2 });
+      pulse.lineStyle(ULT_RING_W, ULT_RING_LIVE, 1);
+      pulse.strokeRoundedRect(-w / 2, -h / 2, w, h, BADGE_RADIUS);
+      this.tweens.add({ targets: pulse, scaleX: 1.08, scaleY: 1.12, alpha: { from: 0.9, to: 0 }, duration: 1100, repeat: -1 });
+      pulse.once("destroy", () => this.tweens.killTweensOf(pulse));
+      c.add(pulse);
+    }
+
+    const cx = w / 2;
+    c.add(this.add.circle(cx, 48, 32, COLORS.meterTrack));
+    const iconKey = classIconKey(player.classDef.id);
+    if (this.textures.exists(iconKey)) {
+      c.add(this.add.image(cx, 48, iconKey).setDisplaySize(44, 44));
+    }
+    c.add(
+      this.add.text(cx, 86, this.playerLabel.toUpperCase(), { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: TEXT.muted }).setOrigin(0.5, 0)
+    );
+    c.add(
+      this.add.text(cx, 102, shortName(player.classDef.name), {
+        fontFamily: FONT_FAMILY,
+        fontSize: "15px",
+        fontStyle: "700",
+        color: TEXT.white,
+        align: "center",
+        wordWrap: { width: w - 24 },
+      }).setOrigin(0.5, 0)
+    );
+    let ult: string;
+    if (this.stagedUltimate) ult = "ULTIMATE ✓ · click to undo";
+    else if (ready && usable) ult = "ULTIMATE READY · click";
+    else if (ready) ult = "ULTIMATE READY";
+    else ult = `ULT ${fmt(player.ultimateMeter)}/${cost}`;
+    c.add(
+      this.add
+        .text(cx, 130, ult, { fontFamily: FONT_FAMILY, fontSize: "12px", fontStyle: "800", color: ready ? "#ffd23f" : TEXT.muted })
+        .setOrigin(0.5, 0)
+    );
+
+    if (usable) {
+      bg.setInteractive(new Phaser.Geom.Rectangle(0, 0, w, h), Phaser.Geom.Rectangle.Contains);
+      bg.input!.cursor = "pointer";
+      bg.on("pointerdown", () => this.onUltimateClick());
+    }
+  }
+
+  drawEndTurnRing(): void {
+    const c = this.endTurnRing;
+    c.removeAll(true);
     const player = this.battle.player;
     const max = player.maxAp ?? player.ap;
+    if (max <= 0) return;
     const planning = !this.pendingTurn && this.canAct();
     const left = planning ? this.plannedAp() : player.ap;
     const preview = planning ? Math.min(left, this.pendingSpend()) : 0;
-    const short = planning && this.pendingSpend() > left;
 
-    const bg = this.add.graphics();
-    bg.fillStyle(0x0b1626, 0.92);
-    bg.fillRoundedRect(x, y, w, h, 12);
-    bg.lineStyle(2, short ? AP_SHORT_COLOR : AP_GEM_COLOR, 1);
-    bg.strokeRoundedRect(x, y, w, h, 12);
-    c.add(bg);
-
-    c.add(
-      this.add
-        .text(x + w / 2, y + 8, "ACTION POINTS", { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: "#8fc8ff" })
-        .setOrigin(0.5, 0)
-    );
-    const big = this.add
-      .text(0, y + 22, String(left), {
-        fontFamily: FONT_FAMILY,
-        fontSize: "46px",
-        fontStyle: "900",
-        color: left === 0 ? "#7d8aa0" : TEXT.white,
-        stroke: "#000000",
-        strokeThickness: 4,
-      })
-      .setOrigin(0, 0);
-    const of = this.add
-      .text(0, y + 44, `/ ${max}`, { fontFamily: FONT_FAMILY, fontSize: "20px", fontStyle: "800", color: "#8fc8ff" })
-      .setOrigin(0, 0);
-    const total = big.width + 6 + of.width;
-    big.setX(x + w / 2 - total / 2);
-    of.setX(big.x + big.width + 6);
-    c.add([big, of]);
-
-    // Gems: 5 per row, AP_RULES.max in all.
-    for (let i = 0; i < AP_RULES.max; i++) {
-      const px = x + w / 2 + ((i % 5) - 2) * AP_PIP_STEP;
-      const py = y + 92 + Math.floor(i / 5) * AP_PIP_STEP;
-      const gem = this.add.graphics();
-      if (i < left - preview) {
-        gem.fillStyle(AP_LIVE, 1).fillCircle(px, py, AP_PIP_R);
-        gem.fillStyle(0xffffff, 0.55).fillCircle(px - 3, py - 3, AP_PIP_R * 0.35);
-      } else if (i < left) {
-        // About to be spent on the card being looked at.
-        gem.fillStyle(0xffd23f, 1).fillCircle(px, py, AP_PIP_R);
-        this.tweens.add({ targets: gem, alpha: 0.35, duration: 380, yoyo: true, repeat: -1 });
-        gem.once("destroy", () => this.tweens.killTweensOf(gem));
-      } else if (i < max) {
-        gem.fillStyle(AP_SPENT, 1).fillCircle(px, py, AP_PIP_R);
-        gem.lineStyle(2, 0x2f7fd0, 0.8).strokeCircle(px, py, AP_PIP_R);
+    // Starts at 12 o'clock and runs clockwise, like a timer.
+    const seg = (Math.PI * 2) / max;
+    const gap = max > 1 ? END_TURN_RING_GAP : 0;
+    const { x, y } = END_TURN;
+    for (let i = 0; i < max; i++) {
+      const start = -Math.PI / 2 + i * seg + gap / 2;
+      const end = start + seg - gap;
+      const arc = this.add.graphics();
+      if (i < left) {
+        arc.lineStyle(END_TURN_RING_W, AP_RING_LIVE, 1);
+        if (i >= left - preview) {
+          this.tweens.add({ targets: arc, alpha: 0.35, duration: 380, yoyo: true, repeat: -1 });
+          arc.once("destroy", () => this.tweens.killTweensOf(arc));
+        }
       } else {
-        gem.lineStyle(1.5, 0x3a4a60, 0.7).strokeCircle(px, py, AP_PIP_R - 3);
+        arc.lineStyle(END_TURN_RING_W, AP_RING_SPENT, 1);
       }
-      c.add(gem);
+      arc.beginPath();
+      arc.arc(x, y, END_TURN_RING_R, start, end, false);
+      arc.strokePath();
+      c.add(arc);
     }
-
-    let note: string;
-    let color: string = TEXT.muted;
-    if (!planning) {
-      note = isBattleOver(this.battle) ? "" : "turn sent";
-    } else if (short) {
-      note = `needs ${this.pendingSpend()} AP — not enough`;
-      color = "#ff8a80";
-    } else if (preview > 0) {
-      note = `→ ${left - preview} AP after this`;
-      color = "#ffd23f";
-    } else {
-      const spent = max - left;
-      note = spent > 0 ? `${spent} AP planned this turn` : `next round: ${Math.min(AP_RULES.max, max + AP_RULES.growth)} max AP`;
-    }
-    c.add(
-      this.add.text(x + w / 2, y + h - 16, note, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color }).setOrigin(0.5, 0)
-    );
   }
 
   renderHand(locked: boolean): void {
@@ -1435,10 +1750,17 @@ export class BattleScene extends Phaser.Scene {
     // Picked cards have moved onto the arena slot.
     const stagedIds = new Set(this.staged.map((c) => c.id));
     const cards = this.battle.player.hand.filter((c) => !stagedIds.has(c.id) && c.id !== this.previewedCardId);
-    const step = CARD_W - FAN_OVERLAP;
-    const totalW = cards.length * CARD_W - Math.max(0, cards.length - 1) * FAN_OVERLAP;
-    // Centered, but never over the AP gauge on the left (big hands shift right).
-    const x0 = Math.max(GAME_WIDTH / 2 - totalW / 2, AP_PANEL.x + AP_PANEL.w + 8);
+    // Between the class badge on the left and the End turn ring on the right;
+    // a hand too big for that squeezes its overlap instead of covering them.
+    const minX = CLASS_BADGE.x + CLASS_BADGE.w + 8;
+    const maxX = END_TURN.x - END_TURN_RING_R - END_TURN_RING_W / 2 - 12;
+    let step = CARD_W - FAN_OVERLAP;
+    if (cards.length > 1 && (cards.length - 1) * step + CARD_W > maxX - minX) {
+      step = (maxX - minX - CARD_W) / (cards.length - 1);
+    }
+    const totalW = cards.length > 0 ? (cards.length - 1) * step + CARD_W : 0;
+    // Centered on the board, shifted aside if it would reach the badge or ring.
+    const x0 = Math.max(minX, Math.min(GAME_WIDTH / 2 - totalW / 2, maxX - totalW));
     cards.forEach((card, i) => this.drawHandCard(card, x0 + i * step, locked));
   }
 
