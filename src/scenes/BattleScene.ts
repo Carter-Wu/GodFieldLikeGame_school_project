@@ -1288,9 +1288,10 @@ export class BattleScene extends Phaser.Scene {
   }
 
   // DEF / MR / ER / UR / ATK, each with its change from the class's base
-  // value (synergies, buffs and debuffs) as a green/red arrow. Each chip
-  // pulses gently; hovering fills it with the stat's color and spells out the
-  // name, and clicking opens an info box above it (see toggleStatInfo).
+  // value (synergies, buffs and debuffs) as a green/red arrow. Hovering a
+  // chip fills it with the stat's color, spells out the name and pulses a
+  // ring out from its edge (like the ready ultimate badge); clicking opens an
+  // info box above it (see toggleStatInfo).
   drawStatChips(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
     const pad = STRIP_PAD;
     const barW = w - pad * 2;
@@ -1309,8 +1310,9 @@ export class BattleScene extends Phaser.Scene {
     }
 
     STAT_CHIPS.forEach((chip, i) => {
-      // Each chip is its own container, centred on the chip so it pulses in
-      // place; children are drawn relative to its top-left corner (x, top).
+      // Each chip is its own container, centred on the chip so its hover ring
+      // scales from the middle; children are drawn relative to its top-left
+      // corner (x, top).
       const box = this.add.container(pad + i * (cw + gap) + cw / 2, y + h / 2);
       container.add(box);
       const x = -cw / 2;
@@ -1395,27 +1397,33 @@ export class BattleScene extends Phaser.Scene {
         this.tweens.add({ targets: name, alpha: p, delay: p ? 120 : 0, duration: p ? 160 : 100 });
       };
 
+      // While hovered: a copy of the chip's outline grows out ~8px and fades,
+      // on repeat (the same pulse as the ready ultimate badge).
+      const ring = this.add.graphics().setVisible(false);
+      ring.lineStyle(3, chip.color, 1);
+      ring.strokeRoundedRect(x, top, cw, h, 7);
+      box.add(ring);
       const pulse = this.tweens.add({
-        targets: box,
-        scale: 1.04,
-        duration: 900,
-        delay: i * 150,
-        yoyo: true,
+        targets: ring,
+        scaleX: { from: 1, to: 1 + 16 / cw },
+        scaleY: { from: 1, to: 1 + 16 / h },
+        alpha: { from: 0.9, to: 0 },
+        duration: 1100,
         repeat: -1,
-        ease: "Sine.easeInOut",
+        paused: true,
       });
-      box.once("destroy", () => this.tweens.killTweensOf([box, sweep, name]));
+      box.once("destroy", () => this.tweens.killTweensOf([ring, sweep, name]));
 
       const hit = this.add.zone(x, top, cw, h).setOrigin(0).setInteractive({ useHandCursor: true });
       box.add(hit);
       hit.on("pointerover", () => {
-        pulse.pause();
-        box.setScale(1.06);
+        ring.setVisible(true);
+        pulse.restart();
         hoverTo(1);
       });
       hit.on("pointerout", () => {
-        box.setScale(1);
-        pulse.resume();
+        pulse.pause();
+        ring.setVisible(false);
         hoverTo(0);
       });
       hit.on("pointerdown", () => this.toggleStatInfo(container, box, chip.key, chip.color, cw, h));
