@@ -9,37 +9,20 @@ larger** (e.g. 1440×1080), uploaded to the `card-images` bucket and pointed at 
 
 ## How to use
 
-Copy the **base style prompt** and replace `[SUBJECT / ACTION DESCRIPTION]`
-with the card's line from the tables below, then add the category color line.
-Keep the rest of the base prompt identical for every card so the set looks like
-one game.
+Paste the **base style prompt** first, then one card line after it. Keep the
+base prompt identical for every card so the set looks like one game. Guardian
+cards use their own style prompt instead (see the Guardian section).
 
 ### Base style prompt
 
 ```
-[SUBJECT / ACTION DESCRIPTION], high-fantasy digital painting, trading card
-game key art, dark fantasy aesthetic. Detailed steel plate armor with intricate
-metallic textures and subtle worn engravings, dramatic volumetric rim lighting,
-deep atmospheric shadows, cinematic chiaroscuro, subtle glowing magical embers
-and particles floating in the air, rich dark color palette with vivid accent
-highlights, highly detailed fantasy illustration, 8k resolution.
+Fantasy card game illustration, 4:3 landscape, single centered subject,
+bold readable silhouette that still reads at thumbnail size, painterly
+digital art with clean dark outlines, dramatic rim lighting, soft vignette,
+background is a smooth gradient in the category colors given below with
+subtle magical particles, no frame, no border, no text, no letters,
+no numbers, no UI, no watermark.
 ```
-
-Example (`fireball`, attack):
-
-```
-A roaring fireball hurtling forward, trailing flames and burning embers,
-high-fantasy digital painting, trading card game key art, dark fantasy
-aesthetic. Detailed steel plate armor with intricate metallic textures and
-subtle worn engravings, dramatic volumetric rim lighting, deep atmospheric
-shadows, cinematic chiaroscuro, subtle glowing magical embers and particles
-floating in the air, rich dark color palette with vivid accent highlights,
-highly detailed fantasy illustration, 8k resolution. color palette: deep
-crimson #2a0b09 to red #b5423a, glowing peach highlights #ffb199
-```
-
-The base prompt has no "no text / no frame" wording, so use the negative prompt
-or Midjourney suffix below to keep letters and borders out of the image.
 
 Negative prompt (for SD / models that take one):
 
@@ -79,6 +62,22 @@ Add the line for the card's category after the card line.
 | smoke_bomb | debuff | A small black bomb bursting into a thick cloud of grey smoke that obscures vision |
 
 ### Guardian
+
+Guardian cards use this style prompt in place of the base style prompt. Replace
+`[SUBJECT / ACTION DESCRIPTION]` with the card's line below, then add the
+category color line.
+
+```
+[SUBJECT / ACTION DESCRIPTION], high-fantasy digital painting, trading card
+game key art, dark fantasy aesthetic. Detailed steel plate armor with intricate
+metallic textures and subtle worn engravings, dramatic volumetric rim lighting,
+deep atmospheric shadows, cinematic chiaroscuro, subtle glowing magical embers
+and particles floating in the air, rich dark color palette with vivid accent
+highlights, highly detailed fantasy illustration, 8k resolution.
+```
+
+This prompt has no "no text / no frame" wording, so use the negative prompt or
+Midjourney suffix above to keep letters and borders out of the image.
 
 | id | Category | Card prompt |
 |---|---|---|
