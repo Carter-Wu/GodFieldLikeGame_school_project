@@ -10,7 +10,8 @@ larger** (e.g. 1440×1080), uploaded to the `card-images` bucket and pointed at 
 ## How to use
 
 Paste the **base style prompt** first, then one card line after it. Keep the
-base prompt identical for every card so the set looks like one game.
+base prompt identical for every card so the set looks like one game. Guardian
+cards use their own style prompt instead (see the Guardian section).
 
 ### Base style prompt
 
@@ -61,6 +62,22 @@ Add the line for the card's category after the card line.
 | smoke_bomb | debuff | A small black bomb bursting into a thick cloud of grey smoke that obscures vision |
 
 ### Guardian
+
+Guardian cards use this style prompt in place of the base style prompt. Replace
+`[SUBJECT / ACTION DESCRIPTION]` with the card's line below, then add the
+category color line.
+
+```
+[SUBJECT / ACTION DESCRIPTION], high-fantasy digital painting, trading card
+game key art, dark fantasy aesthetic. Detailed steel plate armor with intricate
+metallic textures and subtle worn engravings, dramatic volumetric rim lighting,
+deep atmospheric shadows, cinematic chiaroscuro, subtle glowing magical embers
+and particles floating in the air, rich dark color palette with vivid accent
+highlights, highly detailed fantasy illustration, 8k resolution.
+```
+
+This prompt has no "no text / no frame" wording, so use the negative prompt or
+Midjourney suffix above to keep letters and borders out of the image.
 
 | id | Category | Card prompt |
 |---|---|---|
