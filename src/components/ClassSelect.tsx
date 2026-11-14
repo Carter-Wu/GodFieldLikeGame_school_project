@@ -1,6 +1,9 @@
-import { useState, type ReactElement } from "react";
+import { useState, type CSSProperties, type ReactElement } from "react";
 import type { ClassDef } from "../model/classes.ts";
+import type { StatKey } from "../model/stats.ts";
 import { DECK_RULES, deckSize, starterDeckList } from "../model/decks.ts";
+import { cardIconMarkup, classIconMarkup, ultimateIconMarkup } from "../icons.ts";
+import { STAT_STYLE } from "../statIcons.ts";
 import { onlineAvailable } from "../online/supabaseClient.ts";
 import type { Account } from "../online/authApi.ts";
 import type { SavedDeck } from "../online/decksApi.ts";
@@ -24,7 +27,49 @@ export interface ClassSelectProps {
   onOpenTutorial: () => void;
 }
 
-/** Class-select screen (React shell): one card per class, its decks, and vs-CPU / online buttons. */
+// The five stats shown in the inspector, in display order, each with its own
+// icon and colour (shared with the battle HUD, src/statIcons.ts) so the shape
+// of a class reads at a glance.
+const STAT_ROWS: { key: StatKey; label: string; name: string; color: string; icon: string }[] = (
+  ["hp", "def", "mr", "er", "ur"] as const
+).map((key) => ({ key, ...STAT_STYLE[key] }));
+
+// Accent colour per class; unknown classes fall back to gold.
+const CLASS_ACCENT: Record<string, string> = {
+  guardian: "#8fb3e0",
+  pyromancer: "#ff9a3c",
+  black_mage: "#b892ff",
+  craftsman: "#d79a5b",
+  necromancer: "#4fd1a0",
+};
+const accentOf = (classDef: ClassDef): string => CLASS_ACCENT[classDef.id] ?? "#d9be84";
+
+// Letter grade from a stat's share of the best value any class has.
+function grade(ratio: number): string {
+  if (ratio >= 0.9) return "S";
+  if (ratio >= 0.7) return "A";
+  if (ratio >= 0.5) return "B";
+  if (ratio >= 0.3) return "C";
+  return "D";
+}
+
+const svg = (body: string): string => `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${body}</svg>`;
+
+function Icon({ markup, className }: { markup: string; className: string }): ReactElement {
+  // Hand-authored SVG (this file / src/icons.ts), not user input.
+  return <span className={className} aria-hidden="true" dangerouslySetInnerHTML={{ __html: markup }} />;
+}
+
+function Medallion({ classDef, size }: { classDef: ClassDef; size: "sm" | "lg" }): ReactElement {
+  return <Icon className={`lobby-medallion ${size}`} markup={classIconMarkup(classDef)} />;
+}
+
+/**
+ * Lobby / class-select screen (React shell): a class list on the left, an
+ * inspector for the selected class on the right (stats as gauges, synergy and
+ * ultimate in their own boxes), then deck choice and the play buttons, with
+ * Random match as the main action.
+ */
 export function ClassSelect({
   classes,
   initialClassId,
@@ -48,120 +93,230 @@ export function ClassSelect({
   const classDecks = selected ? decks.filter((d) => d.classId === selected.id) : [];
   const chosenDeckId = selected ? (selectedDeckIds[selected.id] ?? null) : null;
 
+  // Gauges are relative to the best value any class has, so the bars show
+  // how classes compare rather than an arbitrary scale.
+  const statMax = Object.fromEntries(
+    STAT_ROWS.map(({ key }) => [key, Math.max(1, ...classes.map((c) => c.baseStats[key]))]),
+  ) as Record<StatKey, number>;
+  const ratio = (classDef: ClassDef, key: StatKey): number => classDef.baseStats[key] / statMax[key];
+  // The two stats this class is relatively best at, shown as its "strengths".
+  const strengths = selected
+    ? [...STAT_ROWS].sort((a, b) => ratio(selected, b.key) - ratio(selected, a.key)).slice(0, 2)
+    : [];
+
   return (
-    <div className="shell-screen">
-      <div className="shell-topbar">
-        <span className="shell-title">Godfield-lite</span>
-        <div className="shell-topbar-right">
+    <div className="lobby">
+      <header className="lobby-topbar">
+        <div className="lobby-brand">
+          <img src="/ui/zenkake-emblem.svg" alt="" className="lobby-brand-mark" />
+          <span className="lobby-brand-name">Zenkake</span>
+        </div>
+        <nav className="lobby-nav">
           {account ? (
-            <>
-              <span className="account-name" title={account.email}>
-                {account.username}
-              </span>
-              <button type="button" className="shell-button" onClick={onLogout}>
-                Log out
-              </button>
-            </>
-          ) : null}
-          {account ? (
-            <button type="button" className="shell-button" onClick={onOpenRecord}>
+            <button type="button" className="lobby-nav-btn" onClick={onOpenRecord}>
               My record
             </button>
           ) : null}
-          <button type="button" className="shell-button" onClick={onOpenGallery}>
+          <button type="button" className="lobby-nav-btn" onClick={onOpenGallery}>
             Card gallery
           </button>
-          <button type="button" className="shell-button gold" onClick={onOpenTutorial}>
+          <button type="button" className="lobby-nav-btn accent" onClick={onOpenTutorial}>
             Tutorial
           </button>
-        </div>
-      </div>
-      <p className="shell-subtitle">
-        Class-based card battle: attack / defend / buff / debuff / monster cards, synergies, and an ultimate meter.
-        Every round both sides play as many cards as their AP pays for at the same time, then both resolve
-        together -- the higher priority strikes first, ties go to the dice.
-      </p>
-      <h2 className="shell-heading">Choose your class</h2>
-      <div className="class-grid">
-        {classes.map((classDef) => (
-          <button
-            key={classDef.id}
-            type="button"
-            className={`class-card${classDef.id === selectedId ? " selected" : ""}`}
-            onClick={() => setSelectedId(classDef.id)}
-          >
-            <div className="class-name">{classDef.name}</div>
-            <div className="class-stats">
-              HP {classDef.baseStats.hp} DEF {classDef.baseStats.def} MR {classDef.baseStats.mr} ER{" "}
-              {classDef.baseStats.er} UR {classDef.baseStats.ur}
+          {account ? (
+            <div className="lobby-account">
+              <span className="lobby-account-name" title={account.email}>
+                {account.username}
+              </span>
+              <button type="button" className="lobby-logout" onClick={onLogout}>
+                Log out
+              </button>
             </div>
-            <div className="class-synergy">Synergy: {classDef.synergyPool.map((s) => s.name).join(", ")}</div>
-            <div className="class-ultimate">
-              Ultimate: {classDef.ultimate.name} (cost {classDef.ultimate.cost}, {classDef.ultimate.damage}{" "}
-              dmg)
-            </div>
-          </button>
-        ))}
+          ) : null}
+        </nav>
+      </header>
+
+      <div className="lobby-heading">
+        <span className="lobby-rule" aria-hidden="true" />
+        <h1>Choose your class</h1>
+        <span className="lobby-rule" aria-hidden="true" />
       </div>
-      {selected ? (
-        <>
-          <h2 className="shell-heading">Choose your deck</h2>
-          <div className="deck-tabs">
-            <button
-              type="button"
-              className={`deck-chip${chosenDeckId === null ? " selected" : ""}`}
-              onClick={() => onSelectDeck(selected.id, null)}
-            >
-              Starter deck <span className="deck-chip-tag">{deckSize(starterDeckList(selected))} cards</span>
-            </button>
-            {classDecks.map((d) => (
+
+      <div className="lobby-main">
+        <div className="lobby-rail" role="tablist" aria-label="Classes">
+          {classes.map((classDef) => {
+            const active = classDef.id === selected?.id;
+            return (
               <button
-                key={d.id}
+                key={classDef.id}
                 type="button"
-                className={`deck-chip${chosenDeckId === d.id ? " selected" : ""}`}
-                onClick={() => onSelectDeck(selected.id, d.id)}
+                role="tab"
+                aria-selected={active}
+                className={`lobby-class${active ? " selected" : ""}`}
+                style={{ "--cls": accentOf(classDef) } as CSSProperties}
+                onClick={() => setSelectedId(classDef.id)}
               >
-                {d.name} <span className="deck-chip-tag">{deckSize(d.cards)} cards</span>
+                <Medallion classDef={classDef} size="sm" />
+                <span className="lobby-class-text">
+                  <span className="lobby-class-name">{classDef.name}</span>
+                  <span className="lobby-class-sub">{classDef.synergyPool.map((s) => s.name).join(" · ")}</span>
+                </span>
               </button>
-            ))}
-            {account ? (
-              <button type="button" className="deck-chip deck-chip-new" onClick={() => onEditDecks(selected.id)}>
-                Edit decks ({classDecks.length}/{DECK_RULES.maxDecksPerClass})
+            );
+          })}
+        </div>
+
+        {selected ? (
+          <section
+            className="lobby-inspector"
+            key={selected.id}
+            aria-live="polite"
+            style={{ "--cls": accentOf(selected) } as CSSProperties}
+          >
+            <div className="lobby-hero">
+              <Medallion classDef={selected} size="lg" />
+              <div className="lobby-hero-text">
+                <div className="lobby-eyebrow">Class</div>
+                <h2 className="lobby-class-title">{selected.name}</h2>
+                <div className="lobby-strengths">
+                  <span className="lobby-strengths-label">Strengths</span>
+                  {strengths.map((st) => (
+                    <span className="lobby-strength" key={st.key} style={{ color: st.color }}>
+                      <Icon className="lobby-strength-icon" markup={svg(st.icon)} />
+                      {st.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="lobby-stats">
+              {STAT_ROWS.map(({ key, label, name, color, icon }) => {
+                const value = selected.baseStats[key];
+                const r = ratio(selected, key);
+                return (
+                  <div className="lobby-stat" key={key} title={name} style={{ "--stat": color } as CSSProperties}>
+                    <div className="lobby-stat-head">
+                      <Icon className="lobby-stat-icon" markup={svg(icon)} />
+                      <span className="lobby-stat-label">{label}</span>
+                      <span className={`lobby-grade g-${grade(r)}`}>{grade(r)}</span>
+                    </div>
+                    <div className="lobby-stat-value">{value}</div>
+                    <div className="lobby-stat-bar">
+                      <span className="lobby-stat-fill" style={{ width: `${Math.round(r * 100)}%` }} />
+                    </div>
+                    <div className="lobby-stat-name">{name}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="lobby-abilities">
+              {selected.synergyPool.map((syn) => (
+                <div className="lobby-slot" key={syn.id}>
+                  <Icon className="lobby-slot-icon" markup={cardIconMarkup({ category: syn.countsCategory })} />
+                  <div className="lobby-slot-body">
+                    <div className="lobby-slot-head">
+                      <span className="lobby-eyebrow">Synergy</span>
+                      {syn.tiers.length ? (
+                        <span className="lobby-tags" title="Cards needed for each tier">
+                          {syn.tiers.map((t, i) => (
+                            <span key={t.count}>
+                              T{i + 1} · {t.count}
+                            </span>
+                          ))}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="lobby-slot-title">{syn.name}</div>
+                    <p>{syn.description}</p>
+                  </div>
+                </div>
+              ))}
+              <div className="lobby-slot ultimate">
+                <Icon className="lobby-slot-icon" markup={ultimateIconMarkup()} />
+                <div className="lobby-slot-body">
+                  <div className="lobby-slot-head">
+                    <span className="lobby-eyebrow">Ultimate</span>
+                    <span className="lobby-tags">
+                      <span>Cost {selected.ultimate.cost}</span>
+                      {selected.ultimate.damage ? <span>{selected.ultimate.damage} dmg</span> : null}
+                    </span>
+                  </div>
+                  <div className="lobby-slot-title">{selected.ultimate.name}</div>
+                  <p>{selected.ultimate.description}</p>
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+      </div>
+
+      {selected ? (
+        <footer className="lobby-dock">
+          <div className="lobby-decks">
+            <span className="lobby-eyebrow">Deck</span>
+            <div className="lobby-deck-list">
+              <button
+                type="button"
+                className={`lobby-deck${chosenDeckId === null ? " selected" : ""}`}
+                onClick={() => onSelectDeck(selected.id, null)}
+              >
+                Starter deck <span className="lobby-deck-count">{deckSize(starterDeckList(selected))}</span>
               </button>
-            ) : null}
+              {classDecks.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  className={`lobby-deck${chosenDeckId === d.id ? " selected" : ""}`}
+                  onClick={() => onSelectDeck(selected.id, d.id)}
+                >
+                  {d.name} <span className="lobby-deck-count">{deckSize(d.cards)}</span>
+                </button>
+              ))}
+              {account ? (
+                <button type="button" className="lobby-deck edit" onClick={() => onEditDecks(selected.id)}>
+                  Edit decks {classDecks.length}/{DECK_RULES.maxDecksPerClass}
+                </button>
+              ) : null}
+            </div>
+            {decksError ? <p className="shell-note">Couldn&apos;t load your decks: {decksError}</p> : null}
           </div>
-          {decksError ? <p className="shell-note">Couldn&apos;t load your decks: {decksError}</p> : null}
-          <div className="shell-actions">
-            <button type="button" className="shell-button primary" onClick={() => onPlayCpu(selected.id)}>
-              Play vs CPU
-            </button>
+
+          <div className="lobby-play">
+            <div className="lobby-play-secondary">
+              <button type="button" className="lobby-btn" onClick={() => onPlayCpu(selected.id)}>
+                Play vs CPU
+              </button>
+              <button
+                type="button"
+                className="lobby-btn"
+                disabled={!onlineAvailable}
+                onClick={() => onCreateOnline(selected.id)}
+              >
+                Create room
+              </button>
+              <button
+                type="button"
+                className="lobby-btn"
+                disabled={!onlineAvailable}
+                onClick={() => onJoinOnline(selected.id)}
+              >
+                Join with code
+              </button>
+            </div>
             <button
               type="button"
-              className="shell-button gold"
-              disabled={!onlineAvailable}
-              onClick={() => onCreateOnline(selected.id)}
-            >
-              Create online room
-            </button>
-            <button
-              type="button"
-              className="shell-button gold"
-              disabled={!onlineAvailable}
-              onClick={() => onJoinOnline(selected.id)}
-            >
-              Join with code
-            </button>
-            <button
-              type="button"
-              className="shell-button gold"
+              className="lobby-btn primary"
               disabled={!onlineAvailable}
               onClick={() => onRandomOnline(selected.id)}
             >
               Random match
             </button>
           </div>
-        </>
+        </footer>
       ) : null}
+
       {!onlineAvailable ? (
         <p className="shell-note">
           Online play, accounts and custom decks are off: VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY

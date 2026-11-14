@@ -7,10 +7,9 @@
 //
 // Driven entirely by each fighter's `lastTurn` (see TurnRecord in
 // engine.ts), so it works the same for vs-CPU and online battles. Steps
-// play in the engine's own resolution order: both sides' defend / buff /
-// debuff / monster cards first (yours, then theirs, each in pick order),
-// then every attack and ultimate in strike order, then monsters, then
-// statuses.
+// play in the engine's own resolution order: both sides' buff, debuff,
+// defend and monster cards first (in setup order), then every attack and
+// ultimate in strike order, then monsters, then statuses.
 //
 // It plays at the viewer's chosen speed (setRecapSpeed, the battle screen's
 // speed button); clicking anywhere during the recap fast-forwards it.
@@ -68,6 +67,7 @@ export interface RecapSlot {
 export interface RoundRecap {
   round: number;
   stage: { y: number; h: number }; // screen band the recap covers
+  centerX?: number; // center of the play zone (defaults to the board center)
   sides: { player: RecapSide; cpu: RecapSide };
   speed?: number; // playback speed, 1 = normal
 }
@@ -94,8 +94,12 @@ export async function playRoundRecap(scene: RecapCapableScene, recap: RoundRecap
   overlay.setInteractive();
   overlay.on("pointerdown", () => skip(run));
   const hint = scene.add
-    .text(944, stageY + stageH - 8, "click to skip", { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
-    .setOrigin(1, 1);
+    .text(recap.centerX ?? GAME_WIDTH / 2, stageY + stageH - 8, "click to skip", {
+      fontFamily: FONT_FAMILY,
+      fontSize: "11px",
+      color: TEXT.muted,
+    })
+    .setOrigin(0.5, 1);
   layer.add([overlay, hint]);
   overlay.setAlpha(0);
   await tween(run, { targets: overlay, alpha: 1, duration: 150 });
@@ -104,16 +108,14 @@ export async function playRoundRecap(scene: RecapCapableScene, recap: RoundRecap
 
   // Same order the engine resolved things in.
   const keys: Key[] = ["player", "cpu"];
-  for (const key of keys) {
-    const plays = recap.sides[key].turn.plays ?? [];
-    if (plays.length === 0) await passStep(run, key);
-    for (const play of plays) if (!dealsDamage(play)) await playStep(run, key, play);
-  }
-  const strikes = keys
-    .flatMap((key) => (recap.sides[key].turn.plays ?? []).filter(dealsDamage).map((play) => ({ key, play })))
-    .sort((a, b) => (a.play.order ?? 99) - (b.play.order ?? 99));
-  if (strikes.length > 0 && recap.sides.player.turn.dice !== null && recap.sides.cpu.turn.dice !== null) await diceBanner(run);
-  for (const { key, play } of strikes) await playStep(run, key, play);
+  for (const key of keys) if ((recap.sides[key].turn.plays ?? []).length === 0) await passStep(run, key);
+  if (recap.sides.player.turn.dice !== null && recap.sides.cpu.turn.dice !== null) await diceBanner(run);
+  const inOrder = (pick: (play: PlayRecord) => boolean) =>
+    keys
+      .flatMap((key) => (recap.sides[key].turn.plays ?? []).filter(pick).map((play) => ({ key, play })))
+      .sort((a, b) => (a.play.order ?? 99) - (b.play.order ?? 99));
+  for (const { key, play } of inOrder((p) => !dealsDamage(p))) await playStep(run, key, play);
+  for (const { key, play } of inOrder(dealsDamage)) await playStep(run, key, play);
   await playMonsterHits(run);
   await playStatusTicks(run);
 
@@ -151,7 +153,7 @@ async function roundBanner(run: RoundRecapRun): Promise<void> {
   const { scene, recap, layer } = run;
   const cy = recap.stage.y + recap.stage.h / 2;
   const text = scene.add
-    .text(GAME_WIDTH / 2, cy, `Round ${recap.round}`, {
+    .text(recap.centerX ?? GAME_WIDTH / 2, cy, `Round ${recap.round}`, {
       fontFamily: FONT_FAMILY,
       fontSize: "40px",
       fontStyle: "800",
@@ -169,35 +171,119 @@ async function roundBanner(run: RoundRecapRun): Promise<void> {
   text.destroy();
 }
 
-// The dice that settled a priority tie between the two sides.
+// The dice that settled a tie between the two sides (setup or priority):
+// both dice tumble in, flickering through faces, land on the engine's rolls,
+// and the higher one lights up.
+const DIE_SIZE = 78;
+const DIE_WIN_COLOR = 0xe0c060;
+
 async function diceBanner(run: RoundRecapRun): Promise<void> {
   const { scene, recap, layer } = run;
   const { player, cpu } = recap.sides;
-  const winner = (player.turn.dice ?? 0) > (cpu.turn.dice ?? 0) ? player : cpu;
+  const playerWins = (player.turn.dice ?? 0) > (cpu.turn.dice ?? 0);
+  const winner = playerWins ? player : cpu;
+  const cx = recap.centerX ?? GAME_WIDTH / 2;
   const cy = recap.stage.y + recap.stage.h / 2;
-  const text = scene.add
-    .text(
-      GAME_WIDTH / 2,
-      cy,
-      `Dice: ${player.who} ${player.turn.dice} · ${cpu.who} ${cpu.turn.dice}\n${winner.who} win${winner.who === "You" ? "" : "s"} the ties!`,
-      {
-        fontFamily: FONT_FAMILY,
-        fontSize: "28px",
-        fontStyle: "800",
-        color: TEXT.white,
-        align: "center",
-        stroke: "#000000",
-        strokeThickness: 6,
-      }
-    )
+
+  const title = scene.add
+    .text(cx, cy - DIE_SIZE / 2 - 58, "Tie! Rolling dice", {
+      fontFamily: FONT_FAMILY,
+      fontSize: "24px",
+      fontStyle: "800",
+      color: TEXT.white,
+      stroke: "#000000",
+      strokeThickness: 6,
+    })
     .setOrigin(0.5)
     .setAlpha(0);
-  layer.add(text);
-  playSfx("card");
-  await tween(run, { targets: text, alpha: 1, duration: 180 });
-  await wait(run, 650);
-  await tween(run, { targets: text, alpha: 0, duration: 180 });
-  text.destroy();
+  layer.add(title);
+
+  const dice = ([
+    [player, -1],
+    [cpu, 1],
+  ] as const).map(([side, dir]) => {
+    const x = cx + dir * 110;
+    const face = scene.add.graphics();
+    const label = scene.add
+      .text(0, -DIE_SIZE / 2 - 12, side.who, { fontFamily: FONT_FAMILY, fontSize: "16px", fontStyle: "700", color: TEXT.white })
+      .setOrigin(0.5, 1);
+    const die = scene.add.container(x - dir * 160, cy - 120, [face]).setAlpha(0).setAngle(-dir * 200);
+    // The name stays upright above the die while the die spins.
+    const nameTag = scene.add.container(x, cy, [label]).setAlpha(0);
+    layer.add([die, nameTag]);
+    drawDieFace(face, Phaser.Math.Between(1, 6), false);
+    return { side, x, face, die, nameTag };
+  });
+
+  await tween(run, { targets: title, alpha: 1, duration: 150 });
+
+  // Flicker through random faces while tumbling in.
+  const flicker = scene.time.addEvent({
+    delay: 70,
+    loop: true,
+    callback: () => {
+      for (const d of dice) drawDieFace(d.face, Phaser.Math.Between(1, 6), false);
+    },
+  });
+  const ticks = scene.time.addEvent({ delay: 150, repeat: 4, callback: () => playSfx("card") });
+  await Promise.all(
+    dice.map((d) =>
+      tween(run, { targets: d.die, x: d.x, y: cy, angle: 0, alpha: 1, duration: 750, ease: "Cubic.easeOut" })
+    )
+  );
+  flicker.remove();
+  ticks.remove();
+
+  // Land on the real rolls.
+  playSfx("block");
+  for (const d of dice) {
+    drawDieFace(d.face, d.side.turn.dice ?? 1, false);
+    scene.tweens.add({ targets: d.die, scale: { from: 1.18, to: 1 }, duration: 220, ease: "Back.easeOut" });
+  }
+  await tween(run, { targets: dice.map((d) => d.nameTag), alpha: 1, duration: 150 });
+  await wait(run, 220);
+
+  // The winner's die lights up.
+  const win = dice.find((d) => d.side === winner)!;
+  const lose = dice.find((d) => d.side !== winner)!;
+  drawDieFace(win.face, win.side.turn.dice ?? 1, true);
+  playSfx("buff");
+  burstParticles(run, win.x, cy, { colors: [DIE_WIN_COLOR, 0xffffff], count: 14, maxDist: 90 });
+  scene.tweens.add({ targets: win.die, scale: 1.15, duration: 200, yoyo: true, ease: "Sine.easeOut" });
+  scene.tweens.add({ targets: lose.die, alpha: 0.45, duration: 200 });
+  title.setText(`${winner.who} win${winner.who === "You" ? "" : "s"} the ties!`);
+
+  await wait(run, 800);
+  const all = [title, ...dice.flatMap((d) => [d.die, d.nameTag])];
+  await tween(run, { targets: all, alpha: 0, duration: 200 });
+  for (const obj of all) obj.destroy(true);
+}
+
+// Pips at (col, row) on a 3x3 grid, -1..1, for each face.
+const PIPS: Record<number, Array<[number, number]>> = {
+  1: [[0, 0]],
+  2: [[-1, -1], [1, 1]],
+  3: [[-1, -1], [0, 0], [1, 1]],
+  4: [[-1, -1], [1, -1], [-1, 1], [1, 1]],
+  5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]],
+  6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]],
+};
+
+// Draw a die face centered on the graphics' origin (so it spins in place).
+function drawDieFace(g: Phaser.GameObjects.Graphics, value: number, winner: boolean): void {
+  const s = DIE_SIZE;
+  g.clear();
+  if (winner) {
+    g.fillStyle(DIE_WIN_COLOR, 0.35);
+    g.fillRoundedRect(-s / 2 - 8, -s / 2 - 8, s + 16, s + 16, 20);
+  }
+  g.fillStyle(0xf4f1ea, 1);
+  g.fillRoundedRect(-s / 2, -s / 2, s, s, 14);
+  g.lineStyle(4, winner ? DIE_WIN_COLOR : 0x2a2a30, 1);
+  g.strokeRoundedRect(-s / 2, -s / 2, s, s, 14);
+  g.fillStyle(value === 1 ? 0xc0392b : 0x1d1d22, 1);
+  const step = s * 0.27;
+  for (const [col, row] of PIPS[value] ?? []) g.fillCircle(col * step, row * step, value === 1 ? s * 0.11 : s * 0.085);
 }
 
 // --- one play ----------------------------------------------------------------
@@ -209,7 +295,7 @@ function captionFor(run: RoundRecapRun, side: RecapSide, title: string): {
   const { scene, recap, layer } = run;
   const scx = side.slot.x + side.slot.w / 2;
   const cy = recap.stage.y + recap.stage.h / 2 + 4;
-  const leftSide = scx < GAME_WIDTH / 2;
+  const leftSide = scx < (recap.centerX ?? GAME_WIDTH / 2);
   // Beside the slot, toward the middle of the screen.
   const caption = scene.add.container(leftSide ? scx + CARD_W / 2 + 24 : scx - CARD_W / 2 - 24, cy - 44).setAlpha(0);
   const align = leftSide ? 0 : 1;
@@ -445,7 +531,7 @@ async function phaseBanner(run: RoundRecapRun, label: string): Promise<void> {
   const { scene, recap, layer } = run;
   const cy = recap.stage.y + recap.stage.h / 2;
   const text = scene.add
-    .text(GAME_WIDTH / 2, cy, label, { fontFamily: FONT_FAMILY, fontSize: "30px", fontStyle: "800", color: TEXT.white, stroke: "#000000", strokeThickness: 6 })
+    .text(recap.centerX ?? GAME_WIDTH / 2, cy, label, { fontFamily: FONT_FAMILY, fontSize: "30px", fontStyle: "800", color: TEXT.white, stroke: "#000000", strokeThickness: 6 })
     .setOrigin(0.5)
     .setAlpha(0);
   layer.add(text);

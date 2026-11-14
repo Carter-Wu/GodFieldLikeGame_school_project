@@ -133,7 +133,7 @@ export class RandomBattleScene extends BattleScene {
     if (isBattleOver(this.battle)) return this.onResultTick();
     this.turnDeadline = this.match.turnDeadline;
     if (this.autoEndTurnIfTimeUp()) return;
-    this.statusText.setText(this.statusMessage());
+    this.setStatus(this.statusMessage());
   }
 
   // --- rematch --------------------------------------------------------------
@@ -189,7 +189,7 @@ export class RandomBattleScene extends BattleScene {
       setButtonLabel(leaveButton, left === null ? "Leave" : `Leave (${left}s)`);
     }
     this.resultNote?.setText(this.rematchNote());
-    this.statusText.setText(this.statusMessage());
+    this.setStatus(this.statusMessage());
   }
 
   override commitAction(action: Action): void {

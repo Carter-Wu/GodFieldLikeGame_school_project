@@ -38,7 +38,39 @@ export const TEXT: { body: string; muted: string; white: string } = {
   white: "#ffffff",
 };
 
-export const FONT_FAMILY = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+// Battle-screen palette. Kept separate from COLORS so the menus / older
+// scenes can keep their original values while the board moves to the
+// preview's warmer, more translucent look.
+export const UI_COLORS = {
+  panel: 0x111216,
+  panelAlpha: 0.95,
+  edge: 0x3a3529,
+  bronze: 0xa8842f,
+  bronzeHi: 0xd8b95c,
+  bronzeDark: 0x3a2d12,
+  railInk: 0x0b0c0e,
+  ivory: "#f2ead8",
+  body: "#c9ccd1",
+  muted: "#b6b9c2",
+  faint: "#8e919a",
+  gold: "#b9a77c",
+  goldHi: "#e0c060",
+  up: "#6be39a",
+  down: "#ff6b5f",
+  guard: 0x6ec6ff,
+} as const;
+
+export const FONT_UI = "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif";
+export const FONT_DISPLAY = "Cinzel, 'Trajan Pro', Georgia, serif";
+// Numbers (stat values, HP, AP), as in the lobby.
+export const FONT_NUM = "Outfit, Inter, system-ui, sans-serif";
+// The Zenkake wordmark (thin geometric sans, as on the title screen / lobby).
+export const FONT_BRAND = "Jost, Outfit, system-ui, sans-serif";
+// Lobby gold: hairlines, titles, the tutorial highlight.
+export const GOLD = 0xe2c588;
+export const GOLD_CSS = "#e2c588";
+// Legacy alias: most battle text is UI text.
+export const FONT_FAMILY = FONT_UI;
 
 // --- Crisp rendering on high-DPI / scaled-up screens ----------------------
 //
@@ -100,6 +132,120 @@ export function preloadBackground(scene: Phaser.Scene, bg: BackgroundDef): void 
 export function addBackground(scene: Phaser.Scene, bg: BackgroundDef): Phaser.GameObjects.Image | null {
   if (!scene.textures.exists(bg.key)) return null;
   return scene.add.image(0, 0, bg.key).setOrigin(0, 0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+}
+
+// The background pushed back behind the UI: blurred, dimmed and
+// vignetted, so it reads as atmosphere and the cards and panels on top of it
+// stay crisp. Built once per texture into a canvas texture (a cheap
+// down/up-sample blur, so it works on every browser and renderer).
+export function addSoftBackground(
+  scene: Phaser.Scene,
+  bg: BackgroundDef,
+  { blur = 14, dim = 0.46, vignette = 0.88 }: { blur?: number; dim?: number; vignette?: number } = {}
+): Phaser.GameObjects.Image | null {
+  if (!scene.textures.exists(bg.key)) return null;
+  const key = `${bg.key}-soft`;
+  if (!scene.textures.exists(key)) {
+    const src = scene.textures.get(bg.key).getSourceImage() as CanvasImageSource & { width: number; height: number };
+    const W = src.width;
+    const H = src.height;
+    const texture = scene.textures.createCanvas(key, W, H);
+    if (!texture) return addBackground(scene, bg);
+    const ctx = texture.getContext();
+    // Blur: shrink by ~blur layout px per sample, then scale back up in two
+    // smoothed steps. Drawn slightly oversized so the edges don't go soft.
+    const k = Math.max(2, Math.round((blur * W) / GAME_WIDTH));
+    const small = document.createElement("canvas");
+    small.width = Math.max(1, Math.round(W / k));
+    small.height = Math.max(1, Math.round(H / k));
+    const sctx = small.getContext("2d") as CanvasRenderingContext2D;
+    sctx.imageSmoothingQuality = "high";
+    sctx.drawImage(src, 0, 0, small.width, small.height);
+    // Grow back in doublings: each bilinear step smooths the last, so the
+    // result is a soft blur rather than visible blocks.
+    let mid = small;
+    while (mid.width * 2 <= W) {
+      const next = document.createElement("canvas");
+      next.width = mid.width * 2;
+      next.height = mid.height * 2;
+      const nctx = next.getContext("2d") as CanvasRenderingContext2D;
+      nctx.imageSmoothingQuality = "high";
+      nctx.drawImage(mid, 0, 0, next.width, next.height);
+      mid = next;
+    }
+    ctx.imageSmoothingQuality = "high";
+    const bleed = 0.02;
+    ctx.drawImage(mid, -W * bleed, -H * bleed, W * (1 + bleed * 2), H * (1 + bleed * 2));
+    // Tone down, a touch cooler than black so it doesn't go muddy.
+    ctx.fillStyle = `rgba(6, 7, 10, ${dim})`;
+    ctx.fillRect(0, 0, W, H);
+    // Vignette: clear in the middle, dark at the edges and corners.
+    const v = ctx.createRadialGradient(W / 2, H * 0.52, Math.min(W, H) * 0.22, W / 2, H * 0.52, Math.hypot(W, H) * 0.56);
+    v.addColorStop(0, "rgba(4, 5, 7, 0)");
+    v.addColorStop(0.55, `rgba(4, 5, 7, ${vignette * 0.35})`);
+    v.addColorStop(1, `rgba(4, 5, 7, ${vignette})`);
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, W, H);
+    // A darker band under the HUD rows at the top.
+    const top = ctx.createLinearGradient(0, 0, 0, H * 0.3);
+    top.addColorStop(0, "rgba(4, 5, 7, 0.55)");
+    top.addColorStop(1, "rgba(4, 5, 7, 0)");
+    ctx.fillStyle = top;
+    ctx.fillRect(0, 0, W, H * 0.3);
+    texture.refresh();
+  }
+  return scene.add.image(0, 0, key).setOrigin(0, 0).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+}
+
+// The lobby's dark glass panel, for the battle board: a soft drop shadow, a
+// deep navy body that's a shade lighter at the top, a faint inner highlight
+// and a 1px gold hairline (optionally with a faint gold glow). `inset`
+// draws a recessed variant (slots, sockets): no shadow, darker, fainter edge.
+export interface GlassOptions {
+  glow?: boolean;
+  inset?: boolean;
+  edge?: number; // gold hairline alpha
+  fill?: number; // body alpha
+}
+
+export function drawGlass(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+  { glow = false, inset = false, edge, fill }: GlassOptions = {}
+): Phaser.GameObjects.Graphics {
+  const edgeAlpha = edge ?? (inset ? 0.2 : 0.3);
+  if (!inset) {
+    for (let i = 1; i <= 4; i++) {
+      g.fillStyle(0x000000, 0.09);
+      g.fillRoundedRect(x - i * 0.5, y + i * 1.5, w + i, h + i, r + i * 0.5);
+    }
+  }
+  g.fillStyle(inset ? 0x06070b : 0x0b0d14, fill ?? (inset ? 0.62 : 0.93));
+  g.fillRoundedRect(x, y, w, h, r);
+  if (!inset && h > r * 2 + 4) {
+    // Lighter navy at the top, fading out by the middle.
+    const sheen = 0x1a1e2c;
+    g.fillStyle(sheen, 0.55);
+    g.fillRoundedRect(x, y, w, r, { tl: r, tr: r, bl: 0, br: 0 });
+    const fadeH = Math.max(0, Math.min(h * 0.55, 90) - r);
+    g.fillGradientStyle(sheen, sheen, sheen, sheen, 0.55, 0.55, 0, 0);
+    g.fillRect(x, y + r, w, fadeH);
+    g.lineStyle(1, 0xffffff, 0.06);
+    g.lineBetween(x + r, y + 1.5, x + w - r, y + 1.5);
+  }
+  if (glow) {
+    g.lineStyle(6, GOLD, 0.05);
+    g.strokeRoundedRect(x - 2, y - 2, w + 4, h + 4, r + 2);
+    g.lineStyle(3, GOLD, 0.08);
+    g.strokeRoundedRect(x - 1, y - 1, w + 2, h + 2, r + 1);
+  }
+  g.lineStyle(1, GOLD, edgeAlpha);
+  g.strokeRoundedRect(x + 0.5, y + 0.5, w - 1, h - 1, r);
+  return g;
 }
 
 // A soft drop shadow for text drawn straight on a background illustration.

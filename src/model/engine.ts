@@ -15,8 +15,10 @@
 // A round, in order:
 //   1. durations of defends / buffs / debuffs tick down
 //   2. setup: each side's cards are paid for (AP, plus HP or ultimate meter
-//      for some) in the order they were picked, and their defends, buffs,
-//      debuffs and monster summons take effect
+//      for some) in the order they were picked; then both sides' buffs, then
+//      debuffs, then defends, then monster summons take effect. Where both
+//      sides played a card of the same category, the dice (one per side per
+//      round, shared with step 3) decide whose go first
 //   3. damage: every attack card and ultimate from both sides, the higher
 //      priority first. Where the two sides tie on priority, each side's die
 //      roll (one per side per round) decides; a side's own strikes keep the
@@ -53,6 +55,7 @@ import { computeEffectiveStats, type ClassDef } from "./classes.ts";
 import {
   applyDefend,
   cardCost,
+  cardRarity,
   CARD_CATEGORY,
   STACKING,
   type AttackCard,
@@ -60,6 +63,7 @@ import {
   type DefendCard,
   type MonsterAbility,
   type MonsterCard,
+  type Rarity,
 } from "./cardTypes.ts";
 import { ELEMENT, RESIST_STAT, type DamageType, type Element } from "./damageTypes.ts";
 import { buildDeckForClass, findCardById } from "./catalog.ts";
@@ -75,7 +79,14 @@ export const AP_RULES = {
 } as const;
 
 export const FIELD_SIZE = 3; // monsters per side
-const ULTIMATE_PRIORITY = 1;
+export const ULTIMATE_PRIORITY = 1;
+
+// A card's strike priority, for showing on its face: an attack card's
+// `priority` when it has one above 0, else null.
+export function cardPriority(card: Card): number | null {
+  if (card.category !== CARD_CATEGORY.ATTACK) return null;
+  return (card.priority ?? 0) > 0 ? (card.priority ?? 0) : null;
+}
 
 // Dice rolls and the CPU's choices. Tests swap in a seeded source.
 let random: () => number = Math.random;
@@ -186,14 +197,16 @@ export interface PlayRecord {
   damageType: DamageType | null;
   element: Element | null;
   cost: number | null;
-  description: string | null;
+  description: string | null; // describeCard text, without the priority (see `priority`)
+  priority: number | null; // strike priority shown as a badge (attack cards above 0, and the ultimate)
+  rarity: Rarity | null; // the card's tier, null for the ultimate
   target: string | null; // who an attack card was aimed at (a monster's name, or "fighter")
   damage: number | null;
   guarded: number; // absorbed by the target's defend card
   resisted: number; // absorbed by the target's DEF/MR/ER
   guard: GuardInfo | null;
-  // Damage phase: position among both sides' strikes (1 = first), null for
-  // cards that don't strike.
+  // Position among both sides' plays in its phase (1 = first): setup cards
+  // among the setup cards, attacks and ultimates among the strikes.
   order: number | null;
   cancelled: "interrupted" | "knocked_out" | null;
   healed: number;
@@ -209,7 +222,7 @@ export interface PlayRecord {
 export interface TurnRecord {
   round: number;
   plays: PlayRecord[]; // in the order they were picked
-  dice: number | null; // this side's die, if it was needed for a priority tie
+  dice: number | null; // this side's die, if it was needed for a setup-category or priority tie
   monsterHits: MonsterHit[]; // made by this fighter's monsters
   statusTicks: StatusTick[]; // end-of-round status damage this fighter took
 }
@@ -653,7 +666,9 @@ function newPlay(card: Card | null): PlayRecord {
     damageType: (card as { damageType?: DamageType } | null)?.damageType ?? null,
     element: card?.element ?? null,
     cost: card ? cardCost(card) : null,
-    description: card ? describeCard(card) : null,
+    description: card ? describeCard(card, { priority: false }) : null,
+    priority: card ? cardPriority(card) : ULTIMATE_PRIORITY,
+    rarity: card ? cardRarity(card) : null,
     target: null,
     damage: null,
     guarded: 0,
@@ -968,6 +983,53 @@ interface Side {
   interruptsPending: number; // the opponent landed this many "interrupts" cards
 }
 
+// One die per side per round, rolled the first time a tie between the two
+// sides needs settling (in the setup or the damage phase) and reused for
+// every later tie that round. Rerolled until the two differ.
+function sideDice(battle: Battle, sides: [Side, Side]): Map<Side, number> {
+  const [a, b] = sides;
+  if (a.turn.dice === null || b.turn.dice === null) {
+    let da = rollDie();
+    let db = rollDie();
+    for (let i = 0; da === db && i < 20; i++) {
+      da = rollDie();
+      db = rollDie();
+    }
+    if (da === db) db = da === 6 ? 5 : da + 1; // vanishingly unlikely; just settle it
+    a.turn.dice = da;
+    b.turn.dice = db;
+    addLog(battle, `Dice: ${fighterName(a.actor)} ${da}, ${fighterName(b.actor)} ${db}.`);
+  }
+  return new Map<Side, number>([
+    [a, a.turn.dice ?? 0],
+    [b, b.turn.dice ?? 0],
+  ]);
+}
+
+// The order setup cards take effect in, by category. Attacks aren't here:
+// they strike in the damage phase.
+const SETUP_ORDER: readonly string[] = [CARD_CATEGORY.BUFF, CARD_CATEGORY.DEBUFF, CARD_CATEGORY.DEFEND, CARD_CATEGORY.MONSTER];
+
+// Pay for a side's whole turn, in pick order: every card (attacks too) and
+// its "gain AP" (which pays for cards picked after it, as checkPlan counts
+// it), then the monster orders -- even though the monsters act later.
+function payForTurn(side: Side, battle: Battle): void {
+  const { actor } = side;
+  for (const { card, play } of side.cardPlays) {
+    commitCardHousekeeping(actor, card);
+    if (card.category !== CARD_CATEGORY.BUFF && card.category !== CARD_CATEGORY.DEBUFF) continue;
+    for (const effect of card.effects) {
+      if (effect.kind === EFFECT_KIND.GAIN_AP) play.apGained += gainAp(actor, effect.amount);
+    }
+  }
+  const orders = side.action.orders ?? [];
+  for (const order of orders) {
+    const monster = actor.field.find((m) => m.uid === order.uid);
+    if (monster) actor.ap = Math.max(0, actor.ap - orderCost(monster, order.use));
+  }
+  if (side.cardPlays.length === 0 && !side.action.ultimate && orders.length === 0) addLog(battle, `${fighterName(actor)} passes.`);
+}
+
 // Defends, buffs/debuffs and summons go live immediately (the "setup"
 // phase); attacks and ultimates are resolved afterwards for both sides (the
 // "damage" phase). Running every card's setup before anyone's damage is what
@@ -975,39 +1037,52 @@ interface Side {
 // same round, instead of only protecting against the opponent's *next*
 // round -- the two sides' choices are hidden from each other but resolve
 // together.
-function applySetupPhase(side: Side, battle: Battle): void {
-  const { actor, opponent } = side;
-  for (const { card, play } of side.cardPlays) {
-    commitCardHousekeeping(actor, card);
+//
+// Both sides' setup cards go in one queue: buffs, then debuffs, then
+// defends, then summons. Where both sides played a card of the same
+// category, the dice decide which side's go first; a side's own cards of one
+// category keep their pick order.
+function resolveSetupPhase(battle: Battle, sides: [Side, Side]): void {
+  for (const side of sides) payForTurn(side, battle);
+
+  const steps: Array<{ side: Side; card: Card; play: PlayRecord; rank: number; index: number }> = [];
+  for (const side of sides) {
+    side.cardPlays.forEach(({ card, play }, index) => {
+      const rank = SETUP_ORDER.indexOf(card.category);
+      if (rank !== -1) steps.push({ side, card, play, rank, index });
+    });
+  }
+  const [a, b] = sides;
+  const ranks = (s: Side): Set<number> => new Set(steps.filter((x) => x.side === s).map((x) => x.rank));
+  const rb = ranks(b);
+  const tie = [...ranks(a)].some((r) => rb.has(r));
+  const dice = tie ? sideDice(battle, sides) : new Map<Side, number>();
+  steps.sort((x, y) => x.rank - y.rank || (dice.get(y.side) ?? 0) - (dice.get(x.side) ?? 0) || x.index - y.index);
+
+  steps.forEach(({ side, card, play }, i) => {
+    const { actor, opponent } = side;
+    play.order = i + 1;
+    // "Gain AP" was already granted while paying (payForTurn).
+    const notGainAp = (effects: Effect[]): Effect[] => effects.filter((e) => e.kind !== EFFECT_KIND.GAIN_AP);
     switch (card.category) {
       case CARD_CATEGORY.DEFEND:
         actor.activeDefends[card.damageType] = { card, remaining: card.duration };
         addLog(battle, `${fighterName(actor)} sets up ${card.name} (defend).`);
         break;
       case CARD_CATEGORY.BUFF:
-        applyEffects(actor, actor, card.effects, card.duration ?? 1, play, battle.round);
+        applyEffects(actor, actor, notGainAp(card.effects), card.duration ?? 1, play, battle.round);
         addLog(battle, `${fighterName(actor)} plays ${card.name} (buff).`);
         break;
       case CARD_CATEGORY.DEBUFF:
-        applyEffects(actor, opponent, card.effects, card.duration ?? 1, play, battle.round);
+        applyEffects(actor, opponent, notGainAp(card.effects), card.duration ?? 1, play, battle.round);
         addLog(battle, `${fighterName(actor)} plays ${card.name} (debuff).`);
         break;
       case CARD_CATEGORY.MONSTER:
         if (summonMonster(actor, card, battle.round)) play.summoned.push(card.name);
         addLog(battle, `${fighterName(actor)} summons ${card.name}.`);
         break;
-      // ATTACK is resolved in resolveDamagePhase, once both sides' defends and
-      // buffs/debuffs for this round are already in place.
     }
-  }
-  // Monster orders are paid for now too (after the cards, as checkPlan
-  // counts them), even though the monsters act later.
-  const orders = side.action.orders ?? [];
-  for (const order of orders) {
-    const monster = actor.field.find((m) => m.uid === order.uid);
-    if (monster) actor.ap = Math.max(0, actor.ap - orderCost(monster, order.use));
-  }
-  if (side.cardPlays.length === 0 && !side.action.ultimate && orders.length === 0) addLog(battle, `${fighterName(actor)} passes.`);
+  });
 }
 
 interface Strike {
@@ -1039,24 +1114,7 @@ function resolveDamagePhase(battle: Battle, sides: [Side, Side]): void {
   const priorities = (s: Side): Set<number> => new Set(strikes.filter((x) => x.side === s).map((x) => x.priority));
   const pb = priorities(b);
   const tie = [...priorities(a)].some((p) => pb.has(p));
-  const dice = new Map<Side, number>([
-    [a, 0],
-    [b, 0],
-  ]);
-  if (tie) {
-    let da = rollDie();
-    let db = rollDie();
-    for (let i = 0; da === db && i < 20; i++) {
-      da = rollDie();
-      db = rollDie();
-    }
-    if (da === db) db = da === 6 ? 5 : da + 1; // vanishingly unlikely; just settle it
-    dice.set(a, da);
-    dice.set(b, db);
-    a.turn.dice = da;
-    b.turn.dice = db;
-    addLog(battle, `Dice: ${fighterName(a.actor)} ${da}, ${fighterName(b.actor)} ${db}.`);
-  }
+  const dice = tie ? sideDice(battle, sides) : new Map<Side, number>();
   strikes.sort((x, y) => y.priority - x.priority || (dice.get(y.side) ?? 0) - (dice.get(x.side) ?? 0) || x.index - y.index);
 
   strikes.forEach((strike, i) => {
@@ -1217,8 +1275,7 @@ export function resolveRound(battle: Battle, playerAction: Action, cpuAction: Ac
   ];
 
   addLog(battle, `-- Round ${battle.round} --`);
-  applySetupPhase(sides[0], battle);
-  applySetupPhase(sides[1], battle);
+  resolveSetupPhase(battle, sides);
   resolveDamagePhase(battle, sides);
   checkOutcome(battle);
   if (!isBattleOver(battle)) {
@@ -1310,14 +1367,16 @@ export function describeMonsterOrders(card: Card): string {
 }
 
 // What a card does, short enough for the face of a hand card. The AP cost is
-// drawn separately (cost gem), so it isn't repeated here.
-export function describeCard(card: Card): string {
+// drawn separately (cost gem), so it isn't repeated here. Card faces draw
+// the priority as their own badge (cardFace.ts, FramedCard.tsx) and pass
+// `priority: false` to leave it out of the text.
+export function describeCard(card: Card, { priority = true }: { priority?: boolean } = {}): string {
   const parts: string[] = [];
   switch (card.category) {
     case CARD_CATEGORY.ATTACK: {
       const atk = card as AttackCard;
       parts.push(`${atk.element ?? atk.damageType} ${atk.value}${atk.target === "field" ? " to all monsters" : ""}`);
-      if ((atk.priority ?? 0) > 0) parts.push("fast");
+      if (priority && (atk.priority ?? 0) > 0) parts.push(`Priority ${atk.priority}`);
       if (atk.interrupts) parts.push("interrupts");
       if (atk.lifesteal) parts.push("lifesteal");
       for (const status of atk.applies ?? []) parts.push(describeStatus(status));

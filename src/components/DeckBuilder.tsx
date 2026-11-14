@@ -1,11 +1,14 @@
 import { useMemo, useState, type DragEvent, type ReactElement } from "react";
 import type { ClassDef } from "../model/classes.ts";
-import { CARD_CATEGORY, cardCost, type Card, type CardCategory } from "../model/cardTypes.ts";
+import { CARD_CATEGORY, cardCost, cardRarity, RARITY, RARITY_LABEL, type Card, type CardCategory } from "../model/cardTypes.ts";
 import type { CatalogCardEntry } from "../model/catalog.ts";
 import { describeCard, describeMonsterOrders } from "../model/engine.ts";
 import {
   DECK_RULES,
   classCardPool,
+  deckRarityPoints,
+  maxCopiesOf,
+  rarityPointsOf,
   deckSize,
   starterDeckList,
   validateDeckList,
@@ -74,11 +77,15 @@ interface CardTileProps {
 
 /** One card as a small portrait tile: art, AP cost, name. */
 function CardTile({ card, badge, dim, selected, draggable, onSelect, onPrimary, onSecondary, onDragStart }: CardTileProps): ReactElement {
+  // Rare and legend tiles: a border just inside the tile and a gem before
+  // the name, like the full card faces (FramedCard, cardFace.ts).
+  const rarity = cardRarity(card.props);
+  const marked = rarity !== RARITY.NORMAL;
   return (
     <button
       type="button"
-      className={`card-tile ${card.category}${dim ? " dim" : ""}${selected ? " selected" : ""}`}
-      title={card.name}
+      className={`card-tile ${card.category} rarity-${rarity}${dim ? " dim" : ""}${selected ? " selected" : ""}`}
+      title={marked ? `${card.name} (${RARITY_LABEL[rarity]})` : card.name}
       draggable={draggable}
       onDragStart={onDragStart}
       onClick={onSelect}
@@ -94,9 +101,13 @@ function CardTile({ card, badge, dim, selected, draggable, onSelect, onPrimary, 
       ) : (
         <span className={`card-tile-art gallery-art fallback ${card.category}`}>{card.category}</span>
       )}
+      {marked ? <span className="card-tile-rarity" aria-hidden="true" /> : null}
       <span className="card-tile-cost">{cardCost(card.props)}</span>
       {badge ? <span className="card-tile-badge">{badge}</span> : null}
-      <span className="card-tile-name">{card.name}</span>
+      <span className="card-tile-name">
+        {marked ? <span className="card-tile-gem" aria-label={RARITY_LABEL[rarity]} /> : null}
+        {card.name}
+      </span>
     </button>
   );
 }
@@ -169,13 +180,23 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
     setDirty(true);
   };
 
+  const limitOf = (cardId: string): number => maxCopiesOf(pool.find((c) => c.id === cardId));
+  const overLimit = pool.some((c) => (counts[c.id] ?? 0) > maxCopiesOf(c));
+  const points = deckRarityPoints(list);
+  const overBudget = points > DECK_RULES.maxRarityPoints;
+  // Room for one more copy: under its copy limit, and its rarity points fit.
+  const canAdd = (card: CatalogCardEntry | null | undefined): boolean =>
+    Boolean(card) &&
+    (counts[card!.id] ?? 0) < maxCopiesOf(card) &&
+    points + rarityPointsOf(card) <= DECK_RULES.maxRarityPoints;
+
   const setCopies = (cardId: string, copies: number): void => {
-    setCounts((c) => ({ ...c, [cardId]: Math.max(0, Math.min(DECK_RULES.maxCopies, copies)) }));
+    setCounts((c) => ({ ...c, [cardId]: Math.max(0, Math.min(limitOf(cardId), copies)) }));
     setDirty(true);
   };
 
   const addOne = (cardId: string): void => {
-    if (readOnly || (counts[cardId] ?? 0) >= DECK_RULES.maxCopies) return;
+    if (readOnly || !canAdd(pool.find((c) => c.id === cardId))) return;
     setCopies(cardId, (counts[cardId] ?? 0) + 1);
   };
 
@@ -256,10 +277,21 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
           </span>
           <span className="deck-rule-now">now {total}</span>
         </li>
-        <li className="deck-rule ok">
+        <li className={`deck-rule${overLimit ? " bad" : " ok"}`}>
           <span className="deck-rule-label">Copies</span>
-          <span className="deck-rule-value">max {DECK_RULES.maxCopies} of each card</span>
+          <span className="deck-rule-value">
+            Normal {DECK_RULES.maxCopies.normal} · Rare {DECK_RULES.maxCopies.rare} · Legend {DECK_RULES.maxCopies.legend}
+          </span>
           <span className="deck-rule-now">{classDef.name} cards only</span>
+        </li>
+        <li className={`deck-rule${overBudget ? " bad" : points === DECK_RULES.maxRarityPoints ? " full" : " ok"}`}>
+          <span className="deck-rule-label">Rarity budget</span>
+          <span className="deck-rule-value">
+            max {DECK_RULES.maxRarityPoints} pts · Rare {DECK_RULES.rarityPoints.rare} · Legend {DECK_RULES.rarityPoints.legend}
+          </span>
+          <span className="deck-rule-now">
+            {points}/{DECK_RULES.maxRarityPoints} used
+          </span>
         </li>
         <li className={`deck-rule${atLimit ? " full" : " ok"}`}>
           <span className="deck-rule-label">Custom decks</span>
@@ -305,7 +337,7 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
         <aside className="deck-panel deck-detail">
           {selected ? (
             <>
-              <FramedCard card={selected} description={describeCard(asCard(selected))} />
+              <FramedCard card={selected} description={describeCard(asCard(selected), { priority: false })} />
               {selected.category === "monster" ? (
                 <p className="deck-detail-text">{describeMonsterOrders(asCard(selected))}</p>
               ) : null}
@@ -319,12 +351,12 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
                   −
                 </button>
                 <span>
-                  {selectedCopies}/{DECK_RULES.maxCopies}
+                  {selectedCopies}/{maxCopiesOf(selected)}
                 </span>
                 <button
                   type="button"
                   aria-label={`Add a ${selected.name}`}
-                  disabled={readOnly || selectedCopies >= DECK_RULES.maxCopies}
+                  disabled={readOnly || !canAdd(selected)}
                   onClick={() => addOne(selected.id)}
                 >
                   +
@@ -437,10 +469,10 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
                 <CardTile
                   key={card.id}
                   card={card}
-                  badge={`${copies}/${DECK_RULES.maxCopies}`}
-                  dim={copies >= DECK_RULES.maxCopies}
+                  badge={`${copies}/${maxCopiesOf(card)}`}
+                  dim={!canAdd(card)}
                   selected={card.id === selectedId}
-                  draggable={!readOnly && copies < DECK_RULES.maxCopies}
+                  draggable={!readOnly && canAdd(card)}
                   onDragStart={dragFrom("pool", card.id)}
                   onSelect={() => setSelectedId(card.id)}
                   onPrimary={() => addOne(card.id)}

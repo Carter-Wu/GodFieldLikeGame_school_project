@@ -11,7 +11,7 @@
 // and statuses, and there's a general card set every class gets (GENERAL_DECK
 // below). Numbers are first-pass, not tuned balance.
 
-import { CARD_CATEGORY, STACKING } from "./cardTypes.ts";
+import { CARD_CATEGORY, RARITY, STACKING, type Rarity } from "./cardTypes.ts";
 import { DAMAGE_TYPE, ELEMENT } from "./damageTypes.ts";
 import {
   MODIFIER_MODE,
@@ -172,7 +172,37 @@ const class_synergies: CatalogRows["class_synergies"] = [
   { class_id: "necromancer", synergy_id: "horde" },
 ];
 
-const cards: CatalogRows["cards"] = [
+// Rare and legend cards (every other card is normal), by value per AP -- see
+// RARITY in cardTypes.ts for how it's scored. Mirrored in the database by
+// supabase/migrations/*_card_rarity.sql.
+const RARITY_BY_CARD: Record<string, Rarity> = {
+  // Legend: 2.0+ times the value per AP of a plain attack
+  tinker: RARITY.LEGEND,
+  meditate: RARITY.LEGEND,
+  mana_tap: RARITY.LEGEND,
+  dark_pact: RARITY.LEGEND,
+  whetstone: RARITY.LEGEND,
+  riveted_plate: RARITY.LEGEND,
+  iron_skin: RARITY.LEGEND,
+  rivet_gun: RARITY.LEGEND,
+  soul_siphon: RARITY.LEGEND,
+  masterwork_blade: RARITY.LEGEND,
+  vampiric_touch: RARITY.LEGEND,
+  curse_of_weakness: RARITY.LEGEND,
+  // Rare: 1.4 to 2.0 times
+  ignite: RARITY.RARE,
+  spring_trap: RARITY.RARE,
+  ember_dart: RARITY.RARE,
+  barrier_field: RARITY.RARE,
+  bone_shield: RARITY.RARE,
+  iron_wall: RARITY.RARE,
+  hex_ward: RARITY.RARE,
+  forge_hammer: RARITY.RARE,
+  shield_bash: RARITY.RARE,
+  shield_rush: RARITY.RARE,
+};
+
+const cardRows: CatalogRows["cards"] = [
   // General -- in every class's deck
   { id: "quick_jab", name: "Quick Jab", category: ATTACK, props: { cost: 1, damageType: PHYSICAL, value: 3, priority: 1 } },
   {
@@ -423,14 +453,22 @@ const cards: CatalogRows["cards"] = [
   },
 ];
 
+const cards: CatalogRows["cards"] = cardRows.map((row) => ({
+  ...row,
+  props: { ...row.props, rarity: RARITY_BY_CARD[row.id] ?? RARITY.NORMAL },
+}));
+
 // The general cards, one copy each in every class's starter deck -- that's
 // also what puts them in every class's custom-deck card pool (decks.ts).
 const GENERAL_DECK = ["quick_jab", "splash", "spark", "healing_potion", "meditate", "smoke_bomb"];
 
+// Each class's starter deck, which is also its custom-deck card pool. A card at
+// 0 copies is in the pool but not the starter deck. Starter decks follow the
+// same rules as custom decks (copies by rarity, rarity budget; see decks.ts).
 const CLASS_DECKS: Record<string, Record<string, number>> = {
   guardian: {
-    shield_bash: 3,
-    heavy_slam: 2,
+    shield_bash: 2,
+    heavy_slam: 3,
     shield_rush: 2,
     iron_wall: 2,
     brace: 2,
@@ -442,8 +480,8 @@ const CLASS_DECKS: Record<string, Record<string, number>> = {
     stone_sentinel: 2,
   },
   pyromancer: {
-    ember_dart: 3,
-    fire_lance: 2,
+    ember_dart: 2,
+    fire_lance: 3,
     fireball: 2,
     flare: 1,
     inferno: 1,
@@ -455,26 +493,26 @@ const CLASS_DECKS: Record<string, Record<string, number>> = {
   },
   black_mage: {
     shadow_bolt: 3,
-    vampiric_touch: 2,
-    eldritch_blast: 1,
+    vampiric_touch: 1,
+    eldritch_blast: 3,
     hex_ward: 2,
-    dark_pact: 2,
-    mana_tap: 1,
-    curse_of_weakness: 2,
-    acid_rain: 2,
-    soul_siphon: 2,
-    nightmare: 1,
+    dark_pact: 1,
+    mana_tap: 0, // in the pool, not the starter deck (rarity budget)
+    curse_of_weakness: 1,
+    acid_rain: 3,
+    soul_siphon: 1,
+    nightmare: 2,
   },
   craftsman: {
-    forge_hammer: 3,
-    rivet_gun: 2,
-    riveted_plate: 2,
+    forge_hammer: 2,
+    rivet_gun: 1,
+    riveted_plate: 1,
     spring_trap: 2,
-    whetstone: 2,
-    masterwork_blade: 1,
-    tinker: 2,
-    caltrops: 2,
-    clockwork_golem: 2,
+    whetstone: 1,
+    masterwork_blade: 0, // in the pool, not the starter deck (rarity budget)
+    tinker: 0, // in the pool, not the starter deck (rarity budget)
+    caltrops: 3,
+    clockwork_golem: 3,
   },
   necromancer: {
     bone_spear: 2,

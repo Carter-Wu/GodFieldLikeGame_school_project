@@ -48,3 +48,51 @@ export function loadCardArt(scene: Phaser.Scene, cards: CatalogCardEntry[], onLo
   });
   scene.load.start();
 }
+
+// Card art is usually a big image (1024px+) shown in a ~170px window. Let
+// the GPU shrink it and every fine line aliases ("jaggy" art). Instead,
+// resample it once on a 2D canvas -- halving in steps with high-quality
+// smoothing, which averages properly -- to exactly the device pixels it
+// covers, cropped to the window's shape. Cached per size.
+export function sizedArtKey(scene: Phaser.Scene, key: string, width: number, height: number): string {
+  const w = Math.max(1, Math.round(width));
+  const h = Math.max(1, Math.round(height));
+  const sizedKey = `${key}@${w}x${h}`;
+  if (scene.textures.exists(sizedKey)) return sizedKey;
+
+  const src = scene.textures.get(key).getSourceImage() as CanvasImageSource & { width: number; height: number };
+  // Cover crop: the largest centered region with the window's aspect ratio.
+  const ratio = w / h;
+  let sw = src.width;
+  let sh = src.height;
+  if (sw / sh > ratio) sw = sh * ratio;
+  else sh = sw / ratio;
+  const sx = (src.width - sw) / 2;
+  const sy = (src.height - sh) / 2;
+
+  let canvas = document.createElement("canvas");
+  canvas.width = Math.round(sw);
+  canvas.height = Math.round(sh);
+  let ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  while (canvas.width / 2 >= w && canvas.height / 2 >= h) {
+    const half = document.createElement("canvas");
+    half.width = Math.round(canvas.width / 2);
+    half.height = Math.round(canvas.height / 2);
+    const hctx = half.getContext("2d") as CanvasRenderingContext2D;
+    hctx.imageSmoothingEnabled = true;
+    hctx.imageSmoothingQuality = "high";
+    hctx.drawImage(canvas, 0, 0, half.width, half.height);
+    canvas = half;
+    ctx = hctx;
+  }
+  const texture = scene.textures.createCanvas(sizedKey, w, h);
+  if (!texture) return key;
+  const out = texture.getContext();
+  out.imageSmoothingEnabled = true;
+  out.imageSmoothingQuality = "high";
+  out.drawImage(canvas, 0, 0, w, h);
+  texture.refresh();
+  void ctx;
+  return sizedKey;
+}

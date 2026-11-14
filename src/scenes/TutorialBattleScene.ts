@@ -29,7 +29,7 @@ import { buildCatalog, findCardById, type Catalog } from "../model/catalog.ts";
 import { LOCAL_CATALOG_ROWS } from "../model/catalogData.ts";
 import { createCardInstance, type Card } from "../model/cardTypes.ts";
 import type { ClassDef } from "../model/classes.ts";
-import { COLORS, FONT_FAMILY, TEXT, createButton, textShadow } from "./theme.ts";
+import { COLORS, FONT_DISPLAY, FONT_FAMILY, FONT_NUM, GOLD, GOLD_CSS, UI_COLORS, createButton, textShadow } from "./theme.ts";
 
 const PLAYER_CLASS = "pyromancer";
 const DUMMY_LABEL = "Training Dummy";
@@ -87,9 +87,13 @@ function pickCardText(cardName: string, intro: string, extra = ""): (s: Tutorial
 
 const focusHandCard = (cardId: string) => (s: TutorialBattleScene): Rect | null =>
   previewing(s, cardId) ? null : s.handCardRect(cardId);
+const focusApPanel = (): Rect => {
+  const { x, y, w, h } = LAYOUT.apPanel;
+  return { x, y, w, h };
+};
 const focusEndTurn = (): Rect => {
-  const { x, y, r } = LAYOUT.endTurn;
-  return { x: x - r, y: y - r, w: r * 2, h: r * 2 };
+  const { x, y, w, h } = LAYOUT.endTurn;
+  return { x, y, w, h };
 };
 const endTurnStep = (id: string, text: string): Step => ({
   id,
@@ -134,7 +138,7 @@ const SCRIPT: ScriptedRound[] = [
         info: true,
         text: (s) =>
           `You're playing ${s.playerClassName}. Your strip shows your HP, AP and stats (click a stat to read about it).\n\n` +
-          "Your class badge at the bottom left fills up with your ultimate meter.",
+          "Your class badge at the bottom right, above End turn, fills up with your ultimate meter.",
         focus: () => LAYOUT.playerStrip,
       },
       {
@@ -159,9 +163,9 @@ const SCRIPT: ScriptedRound[] = [
         title: "AP",
         info: true,
         text: () =>
-          "Cards cost AP. The ring around End turn shows yours: 2 this round, and Ember Dart uses 1.\n\n" +
+          "Cards cost AP. The crystals above End turn show yours: 2 this round, and Ember Dart has reserved 1 (the dashed gold one).\n\n" +
           "Max AP goes up by 1 every round (up to 10). AP you don't spend is lost when the turn ends.",
-        focus: focusEndTurn,
+        focus: focusApPanel,
       },
       endTurnStep("end-1", "Press End turn to lock in your turn. Then watch the replay of both turns."),
     ],
@@ -450,13 +454,13 @@ export class TutorialBattleScene extends BattleScene {
     this.logPanel.x = LAYOUT.logHideDx;
     this.coachLayer = this.add.container(0, 0).setDepth(940);
     this.highlight = this.add.graphics().setDepth(945);
-    this.tweens.add({ targets: this.highlight, alpha: 0.35, duration: 600, yoyo: true, repeat: -1 });
+    this.tweens.add({ targets: this.highlight, alpha: 0.4, duration: 750, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
     this.render();
   }
 
   // No turn timer in the tutorial: take as long as you like.
   onTurnTick(): void {
-    if (this.statusText?.active) this.statusText.setText(this.statusMessage());
+    if (this.statusText?.active) this.setStatus(this.statusMessage());
   }
 
   commitAction(action: Action): void {
@@ -519,13 +523,20 @@ export class TutorialBattleScene extends BattleScene {
     return { x, y, w: LAYOUT.monster.w, h: LAYOUT.monster.h };
   }
 
+  handCardPlayable(card: Card, locked: boolean): boolean {
+    const allow = this.currentStep()?.allow;
+    if (this.scripted() && !(allow?.kind === "card" && allow.cardId === card.cardId)) return false;
+    return super.handCardPlayable(card, locked);
+  }
+
   drawHandCard(card: Card, x: number, locked: boolean): void {
     super.drawHandCard(card, x, locked);
     this.handCardX.set(card.id, x);
     // Cards the current step isn't about fade back.
     const allow = this.currentStep()?.allow;
     if (!locked && this.scripted() && !(allow?.kind === "card" && allow.cardId === card.cardId)) {
-      (this.handContainer.list[this.handContainer.list.length - 1] as Phaser.GameObjects.Container)?.setAlpha(0.35);
+      const face = this.handContainer.list[this.handContainer.list.length - 1] as Phaser.GameObjects.Container | undefined;
+      if (face) this.dimCard(face, 0.55);
     }
   }
 
@@ -542,16 +553,32 @@ export class TutorialBattleScene extends BattleScene {
     this.highlight.clear();
 
     const { x, y, w, h } = LAYOUT.logBox;
-    const pad = 14;
+    const pad = 16;
+    // The coach box: solid ink with a gold hairline, a soft gold glow that
+    // breathes around it and a gold accent across the top, so the eye goes
+    // to it between moves.
+    const glow = this.add.graphics();
+    for (let i = 1; i <= 4; i++) {
+      glow.lineStyle(i * 3, GOLD, 0.1 - i * 0.018);
+      glow.strokeRoundedRect(x - i, y - i, w + i * 2, h + i * 2, 12 + i);
+    }
+    layer.add(glow);
+    this.tweens.add({ targets: glow, alpha: 0.45, duration: 1400, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    glow.once("destroy", () => this.tweens.killTweensOf(glow));
+
     const bg = this.add.graphics();
-    bg.fillStyle(0x15161a, 0.94);
+    bg.fillStyle(0x0f1014, 0.97);
     bg.fillRoundedRect(x, y, w, h, 12);
-    bg.lineStyle(2, 0xc49b3a, 1);
-    bg.strokeRoundedRect(x, y, w, h, 12);
+    bg.fillStyle(GOLD, 0.06);
+    bg.fillRoundedRect(x, y, w, 64, { tl: 12, tr: 12, bl: 0, br: 0 });
+    bg.lineStyle(1.5, GOLD, 0.85);
+    bg.strokeRoundedRect(x + 0.75, y + 0.75, w - 1.5, h - 1.5, 12);
+    bg.fillStyle(GOLD, 1);
+    bg.fillRoundedRect(x + w / 2 - 36, y - 1, 72, 3, 1.5);
     bg.setInteractive(new Phaser.Geom.Rectangle(x, y, w, h), Phaser.Geom.Rectangle.Contains);
     layer.add(bg);
     this.coachFlash = this.add.graphics();
-    this.coachFlash.lineStyle(5, 0xffd23f, 1);
+    this.coachFlash.lineStyle(4, 0xffd23f, 1);
     this.coachFlash.strokeRoundedRect(x - 2, y - 2, w + 4, h + 4, 14);
     this.coachFlash.setAlpha(0);
     layer.add(this.coachFlash);
@@ -580,28 +607,43 @@ export class TutorialBattleScene extends BattleScene {
       body = `Play cards and press End turn until the ${DUMMY_LABEL} is down.`;
     }
 
-    layer.add(this.add.text(x + pad, y + pad, heading, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: "#c49b3a" }));
+    layer.add(
+      this.add
+        .text(x + pad, y + pad + 2, heading, { fontFamily: FONT_DISPLAY, fontSize: "11.5px", fontStyle: "700", color: GOLD_CSS })
+        .setLetterSpacing(1.4)
+    );
+    // Step progress, a thin gold bar under the heading.
+    if (step) {
+      const progress = this.add.graphics();
+      const barW = w - pad * 2;
+      progress.fillStyle(0xffffff, 0.08);
+      progress.fillRoundedRect(x + pad, y + pad + 22, barW, 3, 1.5);
+      progress.fillStyle(GOLD, 0.9);
+      progress.fillRoundedRect(x + pad, y + pad + 22, Math.max(3, (barW * this.stepNumber(step)) / TOTAL_STEPS), 3, 1.5);
+      layer.add(progress);
+    }
     const titleText = textShadow(
-      this.add.text(x + pad, y + pad + 20, title, {
-        fontFamily: FONT_FAMILY,
-        fontSize: "19px",
-        fontStyle: "800",
-        color: TEXT.white,
+      this.add.text(x + pad, y + pad + 36, title, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "21px",
+        fontStyle: "700",
+        color: "#f7efdc",
         wordWrap: { width: w - pad * 2 },
       })
     );
     layer.add(titleText);
-    const bodyText = this.add.text(x + pad, titleText.y + titleText.height + 10, body, {
+    const bodyText = this.add.text(x + pad, titleText.y + titleText.height + 12, body, {
       fontFamily: FONT_FAMILY,
-      fontSize: "14px",
-      color: "#e8eaf0",
-      lineSpacing: 4,
+      fontSize: "15px",
+      fontStyle: "500",
+      color: "#eef0f4",
+      lineSpacing: 5,
       wordWrap: { width: w - pad * 2 },
     });
     layer.add(bodyText);
 
     if (step?.info && !this.recapPlaying) {
-      const next = createButton(this, x + pad, bodyText.y + bodyText.height + 18, w - pad * 2, 38, "Next →", {
+      const next = createButton(this, x + pad, bodyText.y + bodyText.height + 18, w - pad * 2, 40, "Next →", {
         color: COLORS.ultimate,
         hoverColor: COLORS.ultimateHover,
         onClick: () => {
@@ -609,11 +651,12 @@ export class TutorialBattleScene extends BattleScene {
           this.render();
         },
       });
+      (next.container.getAt(1) as Phaser.GameObjects.Text).setStyle({ fontFamily: FONT_NUM, fontSize: "16px", fontStyle: "700" });
       layer.add(next.container);
     }
 
     if (!isBattleOver(this.battle)) {
-      const skip = createButton(this, x + pad, y + h - pad - 34, w - pad * 2, 34, "Skip tutorial", {
+      const skip = createButton(this, x + pad, y + h - pad - 36, w - pad * 2, 36, "Skip tutorial", {
         color: COLORS.restart,
         hoverColor: COLORS.restartHover,
         onClick: () => this.onLeave(),
@@ -621,11 +664,23 @@ export class TutorialBattleScene extends BattleScene {
       layer.add(skip.container);
     }
 
+    // Whatever the step points at gets a soft gold ring that breathes (the
+    // tween in create), and End turn lights up gold when it's the move.
     const focus = step && !this.recapPlaying ? step.focus?.(this) : null;
     if (focus) {
-      this.highlight.lineStyle(4, 0xffd23f, 1);
-      this.highlight.strokeRoundedRect(focus.x - 6, focus.y - 6, focus.w + 12, focus.h + 12, 12);
+      const fx = focus.x - 6;
+      const fy = focus.y - 6;
+      const fw = focus.w + 12;
+      const fh = focus.h + 12;
+      this.highlight.lineStyle(10, GOLD, 0.16);
+      this.highlight.strokeRoundedRect(fx - 3, fy - 3, fw + 6, fh + 6, 15);
+      this.highlight.lineStyle(5, GOLD, 0.35);
+      this.highlight.strokeRoundedRect(fx - 1, fy - 1, fw + 2, fh + 2, 13);
+      this.highlight.lineStyle(2, 0xf3dca6, 1);
+      this.highlight.strokeRoundedRect(fx, fy, fw, fh, 12);
     }
+    const endTurnNext = !this.recapPlaying && step?.allow?.kind === "endTurn";
+    this.endTurnTitle?.setColor(endTurnNext ? GOLD_CSS : UI_COLORS.ivory);
   }
 
   // --- gated input -------------------------------------------------------------

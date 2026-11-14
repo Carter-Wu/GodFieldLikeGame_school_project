@@ -33,6 +33,7 @@ export type Stacking = (typeof STACKING)[keyof typeof STACKING];
 //               leave you at 0
 //   meterCost - ultimate meter paid to play it
 //   element   - fire / water / electric affinity (see damageTypes.ts)
+//   rarity    - normal / rare / legend (see RARITY); missing = normal
 export interface CardCommon {
   id: number;
   cardId?: string;
@@ -44,6 +45,32 @@ export interface CardCommon {
   hpCost?: number;
   meterCost?: number;
   element?: Element | null;
+  rarity?: Rarity;
+}
+
+// Card tiers, by value per AP (docs/DESIGN.md "Card rarity"): every effect
+// is scored in damage-equivalent points and divided by what the card costs
+// (AP x 3 + HP + meter x 0.6 + 1.5 for the card itself), relative to a plain
+// 1-AP, 3-damage attack. Below 1.4 is normal, 1.4 to 2.0 rare, 2.0 and up
+// legend.
+export const RARITY = {
+  NORMAL: "normal",
+  RARE: "rare",
+  LEGEND: "legend",
+} as const;
+
+export type Rarity = (typeof RARITY)[keyof typeof RARITY];
+
+export const RARITY_LABEL: Record<Rarity, string> = {
+  normal: "Normal",
+  rare: "Rare",
+  legend: "Legend",
+};
+
+// A card's rarity from its props; anything missing or unknown is normal.
+export function cardRarity(props: { rarity?: unknown } | null | undefined): Rarity {
+  const r = props?.rarity;
+  return r === RARITY.RARE || r === RARITY.LEGEND ? r : RARITY.NORMAL;
 }
 
 // Attack card: deals `value` damage of `damageType` (+ the attacker's ATK).

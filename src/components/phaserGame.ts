@@ -37,7 +37,9 @@ export function createPhaserGame(
     backgroundColor: COLORS.background,
     scale: {
       mode: Phaser.Scale.FIT,
-      autoCenter: Phaser.Scale.CENTER_BOTH,
+      // .phaser-mount is the flexbox that centers the canvas. Letting Phaser
+      // also add centering margins shifts it down/right (top/left only).
+      autoCenter: Phaser.Scale.NO_CENTER,
     },
     scene: scenes,
   });

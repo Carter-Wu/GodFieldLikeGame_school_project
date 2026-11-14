@@ -42,20 +42,34 @@ import type { StatKey } from "../model/stats.ts";
 import { cardCost, type Card, type DefendCard } from "../model/cardTypes.ts";
 import type { ClassDef } from "../model/classes.ts";
 import { allCards, allClasses } from "../model/catalog.ts";
-import { confirmDialog } from "../ui/dialog.ts";
-import { preloadIcons, classIconKey, ULTIMATE_ICON_KEY, CARD_ICON_KEY, SETTINGS_ICON_KEY } from "../phaserIcons.ts";
+import {
+  preloadIcons,
+  classIconKey,
+  statIconKey,
+  ULTIMATE_ICON_KEY,
+  CARD_ICON_KEY,
+  SETTINGS_ICON_KEY,
+  BRAND_EMBLEM_KEY,
+} from "../phaserIcons.ts";
 import { loadCardArt, loadedArtKey } from "../cardArt.ts";
+import { STAT_STYLE, isStyledStat } from "../statIcons.ts";
 import { getVolume, playSfx, setVolume } from "../fx/sound.ts";
 import {
   COLORS,
   TEXT,
+  UI_COLORS,
   FONT_FAMILY,
+  FONT_DISPLAY,
+  FONT_NUM,
+  FONT_BRAND,
+  GOLD,
+  GOLD_CSS,
   BACKGROUNDS,
   GAME_WIDTH,
   GAME_HEIGHT,
-  addBackground,
+  addSoftBackground,
+  drawGlass,
   preloadBackground,
-  roundedRect,
   createButton,
   createCircleButton,
   textShadow,
@@ -65,79 +79,81 @@ import {
 import { AP_GEM_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
 import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
-// 1280x720 board layout: CPU strip top-center, player strip lower-center,
-// portraits in the left column, battle log in the right column, hand along
-// the bottom-center, buttons mid-left. The 720px height budget means fighter
-// info lives in compact 124px strips (header + HP + chips + effects + meter)
-// instead of the old 200px panels -- same data and drawing helpers, tighter
-// rows. The middle arena band stays empty for the recap until Phase 3 slots.
-const STRIP_X = 240;
-const STRIP_W = 816;
-const STRIP_H = 124;
-const STRIP_PAD = 16;
-const CPU_STRIP_Y = 44;
-const PLAYER_STRIP_Y = 414;
-const STATUS_Y = 176;
+// 1280x720 board layout: mirrored full-width bands at the top and above the
+// hand, monster fields flanking a central play zone, battle log in the right
+// column above your class badge and End turn, hand along the bottom across
+// the whole board width. Each band is 92px: header + HP, one stat
+// rail, then the synergy/status chips and ultimate meter. The play zone holds
+// the two arena slots and is where the round recap plays.
+const STRIP_X = 16;
+const STRIP_W = 980;
+const STRIP_H = 92;
+const STRIP_PAD = 14;
+// Stat row: five icon + number badges under the header (the lobby's stat
+// tiles, shrunk). The chips row below keeps the synergy/status chips +
+// ultimate meter.
+const RAIL_Y = 31;
+const RAIL_H = 32;
+const RAIL_GAP = 8;
+const CHIP_ROW_Y = 67;
+const CPU_STRIP_Y = 48;
+const PLAYER_STRIP_Y = 386;
+const STATUS_Y = 150;
+const PLAYER_STRIP_X = STRIP_X;
+const PLAYER_STRIP_W = STRIP_W;
 
-// Left-column portrait for the opponent: identity at a glance (icon + name +
-// HP + ultimate). You don't get one: your strip runs the full width from the
-// left column instead, with your class badge under its left end.
-const PORTRAIT_X = 16;
-const PORTRAIT_W = 208;
-const PORTRAIT_H = 200;
-const CPU_PORTRAIT_Y = 44;
-const PLAYER_STRIP_X = PORTRAIT_X;
-const PLAYER_STRIP_W = STRIP_X + STRIP_W - PLAYER_STRIP_X;
-
-const HAND_Y = 548;
-const CARD_W = 112;
-const CARD_H = 160;
+// Hand cards are vector-drawn (cardFace.ts) at 172x231 -- 40% bigger than
+// the old 123x165 bitmap-framed cards -- across the full board width.
+const HAND_Y = 484;
+const CARD_W = 172;
+const CARD_H = 231;
 
 // The hand (docs "Card Position"): cards fanned out from the bottom center;
 // hover expands a card; a click moves it to the middle of the screen in full
 // view (at most a third of the screen tall, with space above and below);
 // clicking it again plays it onto your side of the arena, clicking anywhere
 // else puts it back.
-const FAN_OVERLAP = 44;
+const FAN_OVERLAP = 8;
 
-// Your class badge, under the player strip and left of the hand: icon + name,
+// Your class badge, in the right column between the log and End turn: icon + name,
 // ringed by a yellow gauge for the ultimate meter. Once it's full the badge
 // glows and pulses, and clicking it toggles the ultimate for this turn.
-const CLASS_BADGE = { x: PORTRAIT_X, y: HAND_Y, w: PORTRAIT_W, h: CARD_H };
-const BADGE_RADIUS = 12;
+const CLASS_BADGE = { x: 1008, y: 438, w: 256, h: 94 };
+const BADGE_RADIUS = 14;
 const ULT_RING_W = 5;
 const ULT_RING_LIVE = 0xffd23f;
 
-// The round End turn button, right of the hand, ringed by a yellow gauge:
-// one segment per AP this turn, lit = AP left, pulsing = about to be spent
-// on the card you're looking at, dark = spent on this turn's picks.
-const END_TURN = { x: STRIP_X + STRIP_W - 64, y: HAND_Y + CARD_H / 2, r: 44 };
-const END_TURN_RING_R = 53;
-const END_TURN_RING_W = 9;
-const END_TURN_RING_GAP = 0.06; // radians between segments
-const AP_RING_LIVE = 0xffd23f;
-const AP_RING_SPENT = 0x3a3220;
+// The AP panel sits under the class badge in the right column: big AP count
+// and one crystal per AP, with the End turn button at its bottom.
+const AP_PANEL = { x: 1008, y: 540, w: 256, h: 170 };
+const AP_CRYSTAL_Y = 74;
+const END_TURN = { x: AP_PANEL.x + 12, y: AP_PANEL.y + 106, w: AP_PANEL.w - 24, h: 54 };
+const AP_LIVE = 0x3cc8f5;
+const AP_RESERVED = 0xf2b544;
 const HOVER_LIFT = 14;
 const HOVER_SCALE = 1.12;
-const PREVIEW_SCALE = 1.45; // 160px card -> 232px, under a third of 720
-const PREVIEW_RING = 0xc49b3a;
-const STAGE_SCALE = 0.6; // picked cards, shrunk onto the player's slot
+const PREVIEW_SCALE = 1.3; // 231px card -> 300px
+const PREVIEW_RING = 0xe2c588;
+const RECAP_FACE = 0.88; // the card shown on its slot during the round recap
+const STAGE_SCALE = 0.74; // picked cards, on the player's slot
 
-// Middle arena slots: the player's holds the cards picked this turn; once
-// the turn is sent, the opponent's shows a face-down card until the recap.
+// Middle play zone: slots centered between the two monster fields.
 const SLOT_W = 150;
-const SLOT_H = 190;
-const SLOT_Y = 195;
-const SLOT_GAP = 20;
+const SLOT_H = 176;
+const SLOT_Y = 188;
+const SLOT_GAP = 18;
 const SLOT_TOTAL_W = SLOT_W * 2 + SLOT_GAP;
 
-// Monster fields, flanking the arena slots on the side of their owner's
-// slot: the CPU's to the left, the player's to the right.
-const FIELD_W = 228;
-const FIELD_Y = 206;
-const FIELD_H = 176;
-const CPU_FIELD_X = STRIP_X;
-const PLAYER_FIELD_X = STRIP_X + STRIP_W - FIELD_W;
+// Monster fields flank the central play zone: the CPU's left, the player's
+// right. Sized to the preview's 3-socket plates.
+const FIELD_W = 234;
+const FIELD_Y = 146;
+const FIELD_H = 234;
+const CPU_FIELD_X = 16;
+const PLAYER_FIELD_X = 762;
+const PLAY_ZONE_X = CPU_FIELD_X + FIELD_W;
+const PLAY_ZONE_W = PLAYER_FIELD_X - PLAY_ZONE_X;
+const PLAY_ZONE_CX = PLAY_ZONE_X + PLAY_ZONE_W / 2;
 const MONSTER_W = 72;
 const MONSTER_H = 136;
 const MONSTER_GAP = (FIELD_W - MONSTER_W * FIELD_SIZE) / (FIELD_SIZE - 1);
@@ -160,30 +176,29 @@ export interface PendingTurn {
   round: number; // battle.round at commit
 }
 
-const LOG_X = 1072;
-const LOG_Y = 44;
-const LOG_W = 192;
-const LOG_H = 628;
+const LOG_BOX = { x: 1008, y: 48, w: 256, h: 382 };
+const LOG_HEAD_H = 38;
+const LOG_FOOT_H = 26;
+const LOG_X = LOG_BOX.x;
+const LOG_Y = LOG_BOX.y + LOG_HEAD_H;
+const LOG_W = LOG_BOX.w;
+const LOG_H = LOG_BOX.h - LOG_HEAD_H - LOG_FOOT_H;
 // Wheel scroll step, px. Entries have variable (word-wrapped) heights, so
 // scrolling is a pixel offset, not a line index -- see renderLog.
 const LOG_SCROLL_STEP = 60;
-// The log's dark backing; the whole panel slides right by its width (plus a
-// margin) to hide, leaving just the toggle button in its top-right corner.
-const LOG_BOX = { x: LOG_X - 14, y: LOG_Y - 32, w: LOG_W + 28, h: LOG_H + 42 };
+// The whole panel slides right by its width (plus a margin) to hide, leaving
+// just the toggle button in its top-right corner.
 const LOG_HIDE_DX = LOG_BOX.w + 16;
 const LOG_TOGGLE = { w: 28, h: 22 };
 const LOG_ENTRY_GAP = 6;
 
-// The band the round recap covers: status line, arena, player strip and hand.
-const RECAP_STAGE = { y: STATUS_Y - 8, h: 400 };
+// The band the round recap covers: the central play zone.
+const RECAP_STAGE = { y: FIELD_Y, h: FIELD_H };
 
-const STAT_CHIPS: Array<{ key: StatKey; label: string; color: number }> = [
-  { key: "def", label: "DEF", color: 0xc9c9c9 },
-  { key: "mr", label: "MR", color: 0xb388ff },
-  { key: "er", label: "ER", color: 0xff9d4d },
-  { key: "ur", label: "UR", color: 0xffe066 },
-  { key: "atk", label: "ATK", color: 0xff6b5f },
-];
+// Colours and icons match the lobby's stat tiles (src/statIcons.ts).
+const STAT_CHIPS: Array<{ key: StatKey; label: string; color: number }> = (["def", "mr", "er", "ur", "atk"] as const).map(
+  (key) => ({ key, label: STAT_STYLE[key].label, color: parseInt(STAT_STYLE[key].color.slice(1), 16) })
+);
 
 // Full names and explanations for the stat chips (hover / click).
 const STAT_INFO: Record<StatKey, { label: string; name: string; description: string }> = {
@@ -330,9 +345,9 @@ function roundedRectPath(w: number, h: number, r: number, fraction: number): Pha
 }
 
 function hpColor(pct: number): number {
-  if (pct > 0.5) return 0x4caf6a;
-  if (pct > 0.25) return 0xe0a030;
-  return 0xd9483b;
+  if (pct > 0.5) return 0x5aa862;
+  if (pct > 0.25) return 0xd9a441;
+  return 0xc85448;
 }
 
 // "+5" for a flat guard, "30%" for a percent one.
@@ -350,10 +365,10 @@ function ultimateName(classDef: ClassDef): string {
 export const LAYOUT = {
   cpuStrip: { x: STRIP_X, y: CPU_STRIP_Y, w: STRIP_W, h: STRIP_H },
   playerStrip: { x: PLAYER_STRIP_X, y: PLAYER_STRIP_Y, w: PLAYER_STRIP_W, h: STRIP_H },
-  cpuPortrait: { x: PORTRAIT_X, y: CPU_PORTRAIT_Y, w: PORTRAIT_W, h: PORTRAIT_H },
-  playerSlot: { x: GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W, y: SLOT_Y, w: SLOT_W, h: SLOT_H },
+  playerSlot: { x: PLAY_ZONE_CX + SLOT_TOTAL_W / 2 - SLOT_W, y: SLOT_Y, w: SLOT_W, h: SLOT_H },
   classBadge: CLASS_BADGE,
-  endTurn: { x: END_TURN.x, y: END_TURN.y, r: END_TURN_RING_R + END_TURN_RING_W },
+  endTurn: { x: END_TURN.x, y: END_TURN.y, w: END_TURN.w, h: END_TURN.h },
+  apPanel: AP_PANEL,
   handY: HAND_Y,
   card: { w: CARD_W, h: CARD_H },
   monster: { w: MONSTER_W, h: MONSTER_H },
@@ -365,7 +380,6 @@ export interface BattleSceneData {
   playerClass: ClassDef;
   playerDeck?: Card[] | null; // a custom deck (decks.ts); null/absent = starter deck
   onExit?: (() => void) | null;
-  onAccountSettings?: (() => void) | null; // leave the match and open Account settings; null = no account
 }
 
 // One button on the end-of-game screen.
@@ -391,7 +405,6 @@ export const TURN_SECONDS = 30;
 export class BattleScene extends Phaser.Scene {
   battle!: Battle;
   onExit: (() => void) | null = null;
-  onAccountSettings: (() => void) | null = null;
   recapPlaying = false;
   recapRun: RoundRecapRun | null = null; // active recap (speed/skip control) -- see roundRecap.ts
   shownHp: HpPair | null = null; // { player, cpu } while a recap is counting HP down
@@ -406,14 +419,24 @@ export class BattleScene extends Phaser.Scene {
   resultNote: Phaser.GameObjects.Text | null = null; // a line under them, for subclasses (rematch)
   cpuPanel!: Phaser.GameObjects.Container;
   playerPanel!: Phaser.GameObjects.Container;
-  cpuPortrait!: Phaser.GameObjects.Container;
   statusText!: Phaser.GameObjects.Text;
+  statusRoundPill!: Phaser.GameObjects.Container;
+  statusRoundBg!: Phaser.GameObjects.Graphics;
+  statusRoundText!: Phaser.GameObjects.Text;
   handContainer!: Phaser.GameObjects.Container;
-  endTurnRing!: Phaser.GameObjects.Container; // the AP ring around End turn
+  logFollow = true;
+  endTurnBar!: Phaser.GameObjects.Container;
+  endTurnTitle!: Phaser.GameObjects.Text;
+  endTurnSub!: Phaser.GameObjects.Text;
+  endTurnPips!: Phaser.GameObjects.Container;
+  endTurnHit!: Phaser.GameObjects.Zone;
+  endTurnHover!: Phaser.GameObjects.Graphics;
+  apCount!: Phaser.GameObjects.Text;
+  apMax!: Phaser.GameObjects.Text;
+  endTurnEnabled = true;
   slotsContainer!: Phaser.GameObjects.Container;
   fieldContainer!: Phaser.GameObjects.Container;
   classBadge!: Phaser.GameObjects.Container; // also the ultimate toggle
-  endTurnButton!: Button;
   handHint: string | null = null; // why the card just clicked can't be played
   // This turn's plan, built up card by card: confirmed cards move from the
   // hand onto the player's arena slot (only this client sees them) until
@@ -467,9 +490,9 @@ export class BattleScene extends Phaser.Scene {
       texture.refresh();
     }
     for (const { x, y } of TORCHES) {
-      const glow = this.add.image(x, y - 16, TORCH_GLOW_KEY).setDisplaySize(190, 190).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.5);
+      const glow = this.add.image(x, y - 16, TORCH_GLOW_KEY).setDisplaySize(210, 210).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.3);
       // Alpha and size flicker on unrelated periods, so it never looks regular.
-      this.tweens.add({ targets: glow, alpha: 0.28, duration: 150 + Math.random() * 90, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      this.tweens.add({ targets: glow, alpha: 0.18, duration: 150 + Math.random() * 90, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
       this.tweens.add({
         targets: glow,
         scale: glow.scale * 0.9,
@@ -482,6 +505,32 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  // The Zenkake wordmark, centered in the top bar: the emblem and gold
+  // letter-spaced caps, as in the lobby header.
+  drawBrand(): void {
+    const word = this.add
+      .text(0, 0, "ZENKAKE", {
+        fontFamily: FONT_BRAND,
+        fontSize: "17px",
+        fontStyle: "400",
+        color: GOLD_CSS,
+      })
+      .setLetterSpacing(6.5)
+      .setOrigin(0, 0.5);
+    // Letter spacing trails the last letter; leave it out of the centering.
+    const wordW = word.width - 6.5;
+    const mark = 30;
+    const gap = 10;
+    const hasMark = this.textures.exists(BRAND_EMBLEM_KEY);
+    const total = wordW + (hasMark ? mark + gap : 0);
+    const x0 = GAME_WIDTH / 2 - total / 2;
+    if (hasMark) {
+      this.add.image(x0 + mark / 2, 21, BRAND_EMBLEM_KEY).setDisplaySize(mark, mark);
+    }
+    word.setPosition(x0 + (hasMark ? mark + gap : 0), 21.5);
+    word.setShadow(0, 0, "rgba(226, 197, 136, 0.45)", 8, false, true);
+  }
+
   // --- battle source (overridden by RandomBattleScene) ---------------------
 
   setupBattle(data: BattleSceneData): Battle {
@@ -490,7 +539,7 @@ export class BattleScene extends Phaser.Scene {
     return createBattle(playerClass, cpuClass, { playerDeck: data.playerDeck ?? null });
   }
 
-  // The big name on a fighter's portrait and panel: the class for vs-CPU,
+  // The big name on a fighter's band: the class for vs-CPU,
   // the player's name online (RandomBattleScene).
   displayName(fighter: Fighter): string {
     return shortName(fighter.classDef.name);
@@ -577,26 +626,6 @@ export class BattleScene extends Phaser.Scene {
     this.scene.start("ClassSelectScene");
   }
 
-  // Account settings button: going there ends this match, so ask first.
-  async openAccountSettings(): Promise<void> {
-    const go = this.onAccountSettings;
-    if (!go) return;
-    const sure = await confirmDialog({
-      title: "Going to account settings will leave match",
-      message: "Are you sure?",
-      confirmLabel: "Yes",
-      danger: true,
-    });
-    if (!sure || !this.sys.isActive()) return;
-    this.exitMatch(go);
-  }
-
-  // Leave the match without asking and hand over to `go`. vs-CPU has nothing
-  // to tear down; online scenes override this to leave the room.
-  exitMatch(go: () => void): void {
-    go();
-  }
-
   // AP left after the cards picked so far.
   plannedAp(): number {
     return checkPlan(this.battle.player, this.staged, false, this.orders).ap;
@@ -608,6 +637,42 @@ export class BattleScene extends Phaser.Scene {
     const turnLeft = this.canAct() ? this.secondsLeft(this.turnDeadline) : null;
     if (this.handHint) return `Round ${this.battle.round} — ${this.handHint}${turnLeft === null ? "" : ` (${turnLeft}s)`}`;
     return `Round ${this.battle.round} — ${turnLeft === null ? "" : `${turnLeft}s · `}${this.plannedAp()}/${this.battle.player.maxAp} AP left. Play cards or click your monsters to give orders, then End turn.`;
+  }
+
+  // Split "Round N — hint" into the preview's gold round pill + hint line.
+  // Messages without a round (win/draw/connection) stay as one centered line.
+  setStatus(message: string): void {
+    const match = message.match(/^\s*Round\s+(\d+)\s*[-–—]\s*([\s\S]*)$/i);
+    if (!match) {
+      this.statusRoundPill.setVisible(false);
+      this.statusText
+        .setText(message)
+        .setOrigin(0.5, 0)
+        .setPosition(PLAY_ZONE_CX, STATUS_Y + 3);
+      this.statusText.setWordWrapWidth(PLAY_ZONE_W - 20, true);
+      return;
+    }
+
+    const label = `ROUND ${match[1]}`;
+    const hint = (match[2] ?? "").trim();
+    this.statusRoundText.setText(label);
+    const pillW = this.statusRoundText.width + 20;
+
+    this.statusRoundBg.clear();
+    this.statusRoundBg.fillStyle(0x1a160b, 0.92);
+    this.statusRoundBg.fillRoundedRect(0, -12, pillW, 24, 12);
+    this.statusRoundBg.lineStyle(1, GOLD, 0.55);
+    this.statusRoundBg.strokeRoundedRect(0.5, -11.5, pillW - 1, 23, 12);
+    this.statusRoundPill.setVisible(true);
+
+    const maxHint = PLAY_ZONE_W - pillW - 18;
+    this.statusText.setWordWrapWidth(maxHint, true);
+    this.statusText.setText(hint).setOrigin(0, 0);
+    const hintW = Math.min(this.statusText.width, maxHint);
+    const total = pillW + 8 + hintW;
+    const startX = Phaser.Math.Clamp(PLAY_ZONE_CX - total / 2, PLAY_ZONE_X + 4, PLAYER_FIELD_X - total - 4);
+    this.statusRoundPill.setPosition(startX, STATUS_Y + 11);
+    this.statusText.setPosition(startX + pillW + 8, STATUS_Y + 3);
   }
 
   // --- turn timer ----------------------------------------------------------
@@ -628,7 +693,7 @@ export class BattleScene extends Phaser.Scene {
       this.autoEnded = false;
     }
     if (this.autoEndTurnIfTimeUp()) return;
-    this.statusText.setText(this.statusMessage());
+    this.setStatus(this.statusMessage());
   }
 
   // Time's up: end the turn with whatever was planned, if it can still be
@@ -650,7 +715,6 @@ export class BattleScene extends Phaser.Scene {
   create(data: BattleSceneData): void {
     useRenderScale(this);
     this.onExit = data.onExit ?? null;
-    this.onAccountSettings = data.onAccountSettings ?? null;
     this.recapPlaying = false;
     this.clearPlanning();
     this.pendingTurn = null;
@@ -684,8 +748,17 @@ export class BattleScene extends Phaser.Scene {
       this.dismissPreview();
     });
 
-    addBackground(this, BACKGROUNDS.battle);
+    // The hall is pushed back (blurred, dimmed, vignetted) so the board in
+    // front of it reads cleanly.
+    addSoftBackground(this, BACKGROUNDS.battle);
     this.addTorchLight();
+
+    // Top bar: unifies the settings gear, replay speed, title and log column.
+    const topbar = this.add.graphics();
+    topbar.fillGradientStyle(0x08090b, 0x08090b, 0x08090b, 0x08090b, 0.97, 0.97, 0.86, 0.86);
+    topbar.fillRect(0, 0, GAME_WIDTH, 42);
+    topbar.lineStyle(1, GOLD, 0.24);
+    topbar.lineBetween(0, 41.5, GAME_WIDTH, 41.5);
 
     // Dark backing so the battle log reads cleanly over the hall's floor.
     // The log's pieces keep their screen coordinates inside logPanel, which
@@ -693,15 +766,10 @@ export class BattleScene extends Phaser.Scene {
     this.logHidden = readLogHidden();
     this.logPanel = this.add.container(this.logHidden ? LOG_HIDE_DX : 0, 0);
     const logBacking = this.add.graphics();
-    logBacking.fillStyle(0x0c0d0e, 0.72);
-    logBacking.fillRoundedRect(LOG_BOX.x, LOG_BOX.y, LOG_BOX.w, LOG_BOX.h, 12);
+    drawGlass(logBacking, LOG_BOX.x, LOG_BOX.y, LOG_BOX.w, LOG_BOX.h, 14);
     this.logPanel.add(logBacking);
 
-    textShadow(
-      this.add
-        .text(GAME_WIDTH / 2, 14, "Godfield-lite", { fontFamily: FONT_FAMILY, fontSize: "20px", fontStyle: "700", color: TEXT.white })
-        .setOrigin(0.5, 0)
-    );
+    this.drawBrand();
 
     // Top-left, clear of the centered title and the right-side log column:
     // the settings gear (volume, account, replay speed), above the menu it
@@ -744,11 +812,32 @@ export class BattleScene extends Phaser.Scene {
 
     this.cpuPanel = this.add.container(0, 0);
     this.playerPanel = this.add.container(0, 0);
-    this.cpuPortrait = this.add.container(0, 0);
+
+    this.statusRoundBg = this.add.graphics();
+    this.statusRoundText = this.add
+      .text(10, 0, "", {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "12px",
+        fontStyle: "700",
+        color: GOLD_CSS,
+      })
+      .setLetterSpacing(1.6)
+      .setOrigin(0, 0.5);
+    this.statusRoundPill = this.add
+      .container(0, 0, [this.statusRoundBg, this.statusRoundText])
+      .setVisible(false);
 
     this.statusText = textShadow(
       this.add
-        .text(GAME_WIDTH / 2, STATUS_Y, "", { fontFamily: FONT_FAMILY, fontSize: "14px", fontStyle: "700", color: TEXT.white, align: "center" })
+        .text(PLAY_ZONE_CX, STATUS_Y + 3, "", {
+          fontFamily: FONT_FAMILY,
+          fontSize: "13px",
+          fontStyle: "600",
+          color: "#e6e8ec",
+          align: "left",
+          wordWrap: { width: PLAY_ZONE_W - 20 },
+          lineSpacing: 1,
+        })
         .setOrigin(0.5, 0)
     );
 
@@ -756,28 +845,56 @@ export class BattleScene extends Phaser.Scene {
     this.handContainer = this.add.container(0, HAND_Y);
     this.fieldContainer = this.add.container(0, 0);
     this.slotsContainer = this.add.container(0, 0);
-
-    // Above the preview / targeting overlay (depth 900), so the AP ring stays
-    // readable while you decide on a card.
-    this.endTurnRing = this.add.container(0, 0).setDepth(901);
-    this.endTurnButton = createCircleButton(this, END_TURN.x, END_TURN.y, END_TURN.r, "End turn", {
-      color: AP_GEM_COLOR,
-      hoverColor: 0x4a95e0,
-      onClick: () => this.onEndTurnClick(),
-    });
+    this.createEndTurnBar();
 
     this.logPanel.add(
-      this.add.text(LOG_X, LOG_Y - 24, "Battle log", { fontFamily: FONT_FAMILY, fontSize: "14px", color: TEXT.muted }).setOrigin(0, 0)
+      this.add
+        .text(LOG_BOX.x + 14, LOG_BOX.y + 11, "BATTLE LOG", {
+          fontFamily: FONT_DISPLAY,
+          fontSize: "13px",
+          fontStyle: "700",
+          color: GOLD_CSS,
+        })
+        .setLetterSpacing(2)
+        .setOrigin(0, 0)
+    );
+
+    const footY = LOG_BOX.y + LOG_BOX.h - LOG_FOOT_H;
+    const footLine = this.add.graphics();
+    footLine.lineStyle(1, GOLD, 0.18);
+    footLine.lineBetween(LOG_BOX.x + 10, footY + 0.5, LOG_BOX.x + LOG_BOX.w - 10, footY + 0.5);
+    this.logPanel.add(footLine);
+    this.logPanel.add(
+      this.add
+        .text(LOG_BOX.x + 12, footY + 5, "Oldest first", {
+          fontFamily: FONT_FAMILY,
+          fontSize: "11px",
+          fontStyle: "600",
+          color: UI_COLORS.muted,
+        })
+        .setLetterSpacing(0.8)
+    );
+    this.logPanel.add(
+      this.add
+        .text(LOG_BOX.x + LOG_BOX.w - 12, footY + 5, "Scroll ↕", {
+          fontFamily: FONT_FAMILY,
+          fontSize: "11px",
+          fontStyle: "600",
+          color: UI_COLORS.muted,
+        })
+        .setLetterSpacing(0.8)
+        .setOrigin(1, 0)
     );
 
     // Scrolling is done by picking which slice of battle.log to render
-    // (index 0 = newest) rather than by pixel-clipping a moving container --
+    // (index 0 = oldest) rather than by pixel-clipping a moving container --
     // Phaser 4's WebGL renderer dropped support for GeometryMask (it wants a
     // texture-based Filter instead), and every log line is a short one-liner
     // anyway, so paging by line is simpler and renderer-agnostic.
     this.logScrollIndex = 0;
     this.logMaxScrollIndex = 0;
-    this.logContainer = this.add.container(LOG_X, LOG_Y);
+    // Keep the body on the same 10px inset as the header and footer.
+    this.logContainer = this.add.container(LOG_X + 10, LOG_Y);
 
     this.logScrollTrack = this.add
       .rectangle(LOG_X + LOG_W - 6, LOG_Y, 4, LOG_H, COLORS.meterTrack)
@@ -795,7 +912,7 @@ export class BattleScene extends Phaser.Scene {
     const logToggle = createButton(
       this,
       LOG_BOX.x + LOG_BOX.w - LOG_TOGGLE.w - 6,
-      LOG_BOX.y + 6,
+      LOG_BOX.y + 9,
       LOG_TOGGLE.w,
       LOG_TOGGLE.h,
       toggleLabel(),
@@ -832,7 +949,7 @@ export class BattleScene extends Phaser.Scene {
     this.render();
     loadCardArt(this, allCards(), () => this.render());
     // Text is drawn once, so redraw when the card fonts (index.html) arrive.
-    Promise.all(["700 16px Cinzel", '900 16px "Exo 2"', "600 16px Inter"].map((font) => document.fonts.load(font)))
+    Promise.all(["700 16px Cinzel", "500 16px Outfit", "600 16px Outfit", "700 16px Outfit", "400 16px Jost", "400 16px Inter", "500 16px Inter", "600 16px Inter", "700 16px Inter", "800 16px Inter"].map((font) => document.fonts.load(font)))
       .then(() => this.sys.isActive() && this.render())
       .catch(() => {});
   }
@@ -841,6 +958,7 @@ export class BattleScene extends Phaser.Scene {
     const next = Phaser.Math.Clamp(this.logScrollIndex + deltaPixels, 0, this.logMaxScrollIndex);
     if (next === this.logScrollIndex) return;
     this.logScrollIndex = next;
+    this.logFollow = next >= this.logMaxScrollIndex - 1;
     this.renderLog();
   }
 
@@ -1014,7 +1132,7 @@ export class BattleScene extends Phaser.Scene {
     this.slotsContainer.setVisible(false); // the recap draws each play itself
 
     const slotX = (key: "player" | "cpu"): number =>
-      key === "cpu" ? GAME_WIDTH / 2 - SLOT_TOTAL_W / 2 : GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W;
+      key === "cpu" ? PLAY_ZONE_CX - SLOT_TOTAL_W / 2 : PLAY_ZONE_CX + SLOT_TOTAL_W / 2 - SLOT_W;
     const side = (key: "player" | "cpu", fighter: Fighter, who: string): RecapSide => ({
       turn: key === "player" ? playerTurn : cpuTurn,
       who,
@@ -1024,12 +1142,13 @@ export class BattleScene extends Phaser.Scene {
       hp: before[key],
       panel: () => this.panelViews[key] as RecapPanel,
       fieldCenter: () => ({ x: (key === "cpu" ? CPU_FIELD_X : PLAYER_FIELD_X) + FIELD_W / 2, y: FIELD_Y + FIELD_H / 2 }),
-      slot: { x: slotX(key), y: SLOT_Y, w: SLOT_W, h: SLOT_H, faceW: CARD_W, faceH: CARD_H },
+      slot: { x: slotX(key), y: SLOT_Y, w: SLOT_W, h: SLOT_H, faceW: CARD_W * RECAP_FACE, faceH: CARD_H * RECAP_FACE },
     });
 
     playRoundRecap(this, {
       round: playerTurn.round,
       stage: RECAP_STAGE,
+      centerX: PLAY_ZONE_CX,
       sides: {
         player: side("player", b.player, "You"),
         cpu: side("cpu", b.cpu, this.opponentLabel),
@@ -1202,12 +1321,11 @@ export class BattleScene extends Phaser.Scene {
 
     this.renderFighterPanel("cpu", this.cpuPanel, STRIP_X, CPU_STRIP_Y, STRIP_W, this.battle.cpu);
     this.renderFighterPanel("player", this.playerPanel, PLAYER_STRIP_X, PLAYER_STRIP_Y, PLAYER_STRIP_W, this.battle.player);
-    this.drawPortrait(this.cpuPortrait, PORTRAIT_X, CPU_PORTRAIT_Y, this.battle.cpu, this.opponentLabel);
     this.drawFields();
     this.drawSlots();
     this.renderHand(locked);
     this.renderLog();
-    this.drawEndTurnRing();
+    this.updateEndTurnBar(locked);
     this.drawClassBadge(locked);
     this.drawPreview(locked);
     if (!locked) {
@@ -1215,12 +1333,17 @@ export class BattleScene extends Phaser.Scene {
       this.drawMonsterMenu();
     }
 
-    this.statusText.setText(this.statusMessage());
-    this.endTurnButton.setEnabled(!locked);
-    const plays = this.staged.length + (this.stagedUltimate ? 1 : 0) + this.orders.length;
-    (this.endTurnButton.container.getAt(1) as Phaser.GameObjects.Text).setText(plays > 0 ? `End turn\n(${plays})` : "End turn\n(pass)");
+    this.setStatus(this.statusMessage());
 
     if (isBattleOver(this.battle) && !this.recapPlaying) this.showResult();
+  }
+
+  // Battle panels: 82% ink over the hall with a 1px bronze edge, matching
+  // the preview's cleaner plates.
+  drawPanelBackground(container: Phaser.GameObjects.Container, w: number, h: number, radius = 14): Phaser.GameObjects.Graphics {
+    const g = drawGlass(this.add.graphics(), 0, 0, w, h, radius);
+    container.add(g);
+    return g;
   }
 
   renderFighterPanel(
@@ -1233,105 +1356,84 @@ export class BattleScene extends Phaser.Scene {
   ): void {
     container.removeAll(true);
     container.setPosition(x, y);
-    container.add(roundedRect(this, w, STRIP_H, COLORS.panel, 12));
+    this.drawPanelBackground(container, w, STRIP_H);
 
     // Header row: name, AP pill, HP bar, GUARD badge (while one's up), Hand N.
-    const header = this.drawPanelHeader(container, fighter, w);
+    const header = this.drawPanelHeader(container, fighter, w, key);
     const hpRight = this.drawGuardFrame(container, fighter, w, header.right);
     const setHp = this.drawHpBar(container, key, fighter, header.left, hpRight);
-    this.drawStatChips(container, fighter, w);
+    this.drawStatRail(container, fighter, w);
     // Bottom row is shared: effect chips on the left, ultimate meter right.
     // Your meter is the ring around your class badge instead.
     if (key === "player") {
-      this.drawEffectChips(container, fighter, w, 92, w - STRIP_PAD);
+      this.drawEffectChips(container, fighter, w, CHIP_ROW_Y, w - STRIP_PAD);
     } else {
-      this.drawEffectChips(container, fighter, w, 92, w * 0.55);
-      this.drawUltimateMeter(container, fighter, w * 0.58, 97, w - w * 0.58 - STRIP_PAD);
+      this.drawEffectChips(container, fighter, w, CHIP_ROW_Y, w * 0.55);
+      this.drawUltimateMeter(container, fighter, w * 0.58, CHIP_ROW_Y + 10.5, w - w * 0.58 - STRIP_PAD);
     }
 
     this.panelViews[key] = { x, y, w, h: STRIP_H, container, setHp };
   }
 
-  // Left-column identity block: big class icon, name, side label, HP and
-  // ultimate status. The strip beside it carries bars and chips.
-  drawPortrait(
-    container: Phaser.GameObjects.Container,
-    x: number,
-    y: number,
-    fighter: Fighter,
-    label: string
-  ): void {
-    container.removeAll(true);
-    container.setPosition(x, y);
-    container.add(roundedRect(this, PORTRAIT_W, PORTRAIT_H, COLORS.panel, 12));
-
-    const cx = PORTRAIT_W / 2;
-    container.add(this.add.circle(cx, 52, 34, COLORS.meterTrack));
-    const iconKey = classIconKey(fighter.classDef.id);
-    if (this.textures.exists(iconKey)) {
-      container.add(this.add.image(cx, 52, iconKey).setDisplaySize(48, 48));
-    }
-    container.add(
-      this.add.text(cx, 94, label.toUpperCase(), { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: TEXT.muted }).setOrigin(0.5, 0)
-    );
-    container.add(
-      this.add.text(cx, 112, this.displayName(fighter), {
-        fontFamily: FONT_FAMILY,
-        fontSize: "15px",
-        fontStyle: "700",
-        color: TEXT.white,
-        align: "center",
-        wordWrap: { width: PORTRAIT_W - 24 },
-      }).setOrigin(0.5, 0)
-    );
-    container.add(
-      this.add.text(cx, 152, `${Math.ceil(fighter.hp)} / ${fighter.maxHp} HP`, {
-        fontFamily: FONT_FAMILY,
-        fontSize: "16px",
-        fontStyle: "800",
-        color: TEXT.white,
-      }).setOrigin(0.5, 0)
-    );
-    const ready = canUseUltimate(fighter);
-    container.add(
-      this.add.text(cx, 176, ready ? "ULT READY" : `ULT ${fmt(fighter.ultimateMeter)}/${fighter.classDef.ultimate.cost}`, {
-        fontFamily: FONT_FAMILY,
-        fontSize: "12px",
-        fontStyle: "800",
-        color: ready ? "#ffd23f" : TEXT.muted,
-      }).setOrigin(0.5, 0)
-    );
-  }
-
   // Returns the gap left between the AP pill and "Hand N" (for the HP bar).
-  drawPanelHeader(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): { left: number; right: number } {
-    const name = this.add.text(STRIP_PAD, 6, this.displayName(fighter), {
-      fontFamily: FONT_FAMILY,
-      fontSize: "14px",
-      fontStyle: "700",
-      color: TEXT.white,
-    });
+  drawPanelHeader(
+    container: Phaser.GameObjects.Container,
+    fighter: Fighter,
+    w: number,
+    key: "player" | "cpu"
+  ): { left: number; right: number } {
+    const side = this.add
+      .text(STRIP_PAD, 16, key === "cpu" ? "CPU" : "YOU", {
+        fontFamily: FONT_FAMILY,
+        fontSize: "10px",
+        fontStyle: "700",
+        color: UI_COLORS.muted,
+      })
+      .setLetterSpacing(1.6)
+      .setOrigin(0, 0.5);
+    container.add(side);
+
+    const name = this.add
+      .text(STRIP_PAD + side.width + 9, 16, this.displayName(fighter), {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "18px",
+        fontStyle: "700",
+        color: UI_COLORS.ivory,
+      })
+      .setOrigin(0, 0.5);
     container.add(name);
 
-    // AP pill beside the name: left this turn / this turn's max (for you,
-    // after the cards picked so far).
-    const apText = this.add
-      .text(0, 0, `AP ${fmt(fighter === this.battle.player && !this.pendingTurn ? this.plannedAp() : fighter.ap)}/${fighter.maxAp ?? fighter.ap}`, { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: TEXT.white })
-      .setOrigin(0, 0.5);
-    const pillX = STRIP_PAD + name.width + 10;
-    const pillW = apText.width + 16;
-    const pill = this.add.graphics();
-    pill.fillStyle(AP_GEM_COLOR, 1);
-    pill.fillRoundedRect(pillX, 5, pillW, 18, 9);
-    apText.setPosition(pillX + 8, 14);
-    container.add([pill, apText]);
+    // The opponent's AP as a pill beside the name. Yours has its own panel
+    // with crystals above End turn, by the hand.
+    let headerLeft = STRIP_PAD + side.width + name.width + 20;
+    if (key === "cpu") {
+      const apText = this.add
+        .text(0, 0, `AP ${fmt(fighter.ap)}/${fighter.maxAp ?? fighter.ap}`, { fontFamily: FONT_NUM, fontSize: "13px", fontStyle: "700", color: TEXT.white })
+        .setOrigin(0, 0.5);
+      const pillX = headerLeft;
+      const pillW = apText.width + 18;
+      const pill = this.add.graphics();
+      pill.fillStyle(AP_GEM_COLOR, 1);
+      pill.fillRoundedRect(pillX, 6, pillW, 21, 10.5);
+      pill.lineStyle(1, 0xbfe0ff, 0.7);
+      pill.strokeRoundedRect(pillX + 0.5, 6.5, pillW - 1, 20, 10);
+      apText.setPosition(pillX + 9, 16.5);
+      container.add([pill, apText]);
+      headerLeft = pillX + pillW + 10;
+    }
 
     const handCount = fighter.handCount ?? fighter.hand.length;
     const hand = this.add
-      .text(w - STRIP_PAD, 8, `Hand ${handCount}`, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
-      .setOrigin(1, 0);
+      .text(w - STRIP_PAD, 16, `HAND ${handCount}`, {
+        fontFamily: FONT_NUM,
+        fontSize: "12px",
+        fontStyle: "600",
+        color: UI_COLORS.body,
+      })
+      .setLetterSpacing(1.2)
+      .setOrigin(1, 0.5);
     container.add(hand);
-    return { left: pillX + pillW + 10, right: w - STRIP_PAD - hand.width - 12 };
+    return { left: headerLeft, right: w - STRIP_PAD - hand.width - 12 };
   }
 
   // While a defend card is up: a pulsing blue frame around the strip and a
@@ -1342,8 +1444,8 @@ export class BattleScene extends Phaser.Scene {
     if (guards.length === 0) return right;
 
     const frame = this.add.graphics();
-    frame.lineStyle(3, GUARD_COLOR, 1);
-    frame.strokeRoundedRect(1.5, 1.5, w - 3, STRIP_H - 3, 12);
+    frame.lineStyle(2, GUARD_COLOR, 1);
+    frame.strokeRoundedRect(1, 1, w - 2, STRIP_H - 2, 14);
     container.add(frame);
     this.tweens.add({ targets: frame, alpha: 0.35, duration: 800, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
     frame.once("destroy", () => this.tweens.killTweensOf(frame));
@@ -1352,15 +1454,15 @@ export class BattleScene extends Phaser.Scene {
       .text(0, 0, `GUARD ${guards.map(({ card }) => guardAmount(card as DefendCard)).join(" / ")}`, {
         fontFamily: FONT_FAMILY,
         fontSize: "12px",
-        fontStyle: "800",
+        fontStyle: "700",
         color: "#0b1b26",
       })
       .setOrigin(0, 0.5);
     const iconSize = 14;
-    const wBadge = text.width + iconSize + 22;
-    const h = 22;
+    const wBadge = text.width + iconSize + 20;
+    const h = 21;
     const x = right - wBadge;
-    const y = 3;
+    const y = 6;
     const pill = this.add.graphics();
     pill.fillStyle(GUARD_COLOR, 1);
     pill.fillRoundedRect(x, y, wBadge, h, h / 2);
@@ -1385,21 +1487,31 @@ export class BattleScene extends Phaser.Scene {
   ): (next: number) => void {
     const pad = left;
     const barW = right - left;
-    const y = 4;
-    const h = 20;
+    const y = 6;
+    const h = 21;
     const track = this.add.graphics();
-    track.fillStyle(COLORS.meterTrack, 1);
-    track.fillRoundedRect(pad, y, barW, h, 7);
+    track.fillStyle(UI_COLORS.railInk, 1);
+    track.fillRoundedRect(pad, y, barW, h, h / 2);
+    track.lineStyle(1, GOLD, 0.22);
+    track.strokeRoundedRect(pad + 0.5, y + 0.5, barW - 1, h - 1, h / 2);
     const ghost = this.add.graphics();
     const fill = this.add.graphics();
     const hpLabel = this.add
-      .text(pad + 10, y + h / 2, "HP", { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "800", color: TEXT.white })
+      .text(pad + 10, y + h / 2, "HP", {
+        fontFamily: FONT_NUM,
+        fontSize: "12px",
+        fontStyle: "700",
+        color: "#ffffff",
+        stroke: "#000000",
+        strokeThickness: 2,
+      })
+      .setLetterSpacing(1.1)
       .setOrigin(0, 0.5);
     const value = this.add
       .text(pad + barW / 2, y + h / 2, "", {
-        fontFamily: FONT_FAMILY,
-        fontSize: "13px",
-        fontStyle: "800",
+        fontFamily: FONT_NUM,
+        fontSize: "15px",
+        fontStyle: "700",
         color: TEXT.white,
         stroke: "#000000",
         strokeThickness: 3,
@@ -1412,7 +1524,7 @@ export class BattleScene extends Phaser.Scene {
       const bw = barW * Phaser.Math.Clamp(hp / fighter.maxHp, 0, 1);
       if (bw <= 0) return;
       g.fillStyle(color, alpha);
-      g.fillRoundedRect(pad, y, bw, h, Math.min(7, bw / 2));
+      g.fillRoundedRect(pad, y, bw, h, Math.min(h / 2, bw / 2));
     };
     const draw = (hp: number, ghostHp: number): void => {
       bar(ghost, ghostHp, 0xffffff, 0.35);
@@ -1435,18 +1547,17 @@ export class BattleScene extends Phaser.Scene {
     };
   }
 
-  // DEF / MR / ER / UR / ATK, each with its change from the class's base
-  // value (synergies, buffs and debuffs) as a green/red arrow. Hovering a
-  // chip fills it with the stat's color, spells out the name and pulses a
-  // ring out from its edge (like the ready ultimate badge); clicking opens an
-  // info box above it (see toggleStatInfo).
-  drawStatChips(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
+  // The stat row: DEF / MR / ER / UR / ATK as five badges in the lobby's
+  // style -- stat icon, coloured label, big number -- on a tint of the
+  // stat's colour. Each keeps the hover/click explainer, the guard tint and
+  // the change marker.
+  drawStatRail(container: Phaser.GameObjects.Container, fighter: Fighter, w: number): void {
     const pad = STRIP_PAD;
-    const barW = w - pad * 2;
-    const y = 38;
-    const h = 38;
-    const gap = 8;
-    const cw = (barW - gap * (STAT_CHIPS.length - 1)) / STAT_CHIPS.length;
+    const x = pad;
+    const y = RAIL_Y;
+    const h = RAIL_H;
+    const railW = w - pad * 2;
+    const cw = (railW - RAIL_GAP * (STAT_CHIPS.length - 1)) / STAT_CHIPS.length;
     const stats = computeCurrentStats(fighter);
     const base = fighter.classDef.baseStats;
 
@@ -1458,121 +1569,114 @@ export class BattleScene extends Phaser.Scene {
     }
 
     STAT_CHIPS.forEach((chip, i) => {
-      // Each chip is its own container, centred on the chip so its hover ring
-      // scales from the middle; children are drawn relative to its top-left
-      // corner (x, top).
-      const box = this.add.container(pad + i * (cw + gap) + cw / 2, y + h / 2);
+      const box = this.add.container(x + (cw + RAIL_GAP) * i + cw / 2, y + h / 2);
       container.add(box);
-      const x = -cw / 2;
+      const left = -cw / 2;
       const top = -h / 2;
       const delta = stats[chip.key] - (base[chip.key] ?? 0);
       const guard = guardByStat[chip.key];
-      const g = this.add.graphics();
-      g.fillStyle(guard ? 0x16384d : COLORS.meterTrack, 1);
-      g.fillRoundedRect(x, top, cw, h, 7);
-      g.fillStyle(chip.color, 1);
-      g.fillRoundedRect(x, top, 4, h, { tl: 7, bl: 7, tr: 0, br: 0 });
-      const outline = guard ? GUARD_COLOR : delta > 0 ? 0x6be39a : delta < 0 ? 0xff6b5f : null;
-      if (outline !== null) {
-        g.lineStyle(2, outline, 1);
-        g.strokeRoundedRect(x + 1, top + 1, cw - 2, h - 2, 7);
-      }
-      box.add(g);
-
-      if (guard) {
-        box.add(
-          this.add
-            .text(x + cw - 7, top + 4, `🛡${guardAmount(guard)}`, {
-              fontFamily: FONT_FAMILY,
-              fontSize: "10px",
-              fontStyle: "800",
-              color: "#8fd3ff",
-            })
-            .setOrigin(1, 0)
-        );
-      }
-
-      box.add(
-        this.add.text(x + 10, top + 5, chip.label, { fontFamily: FONT_FAMILY, fontSize: "9px", fontStyle: "700", color: TEXT.muted })
+      const statColor = Phaser.Display.Color.IntegerToColor(chip.color).rgba;
+      // The label a step lighter than the icon so the thin serif stays bright.
+      const lc = Phaser.Display.Color.Interpolate.ColorWithColor(
+        Phaser.Display.Color.IntegerToColor(chip.color),
+        Phaser.Display.Color.IntegerToColor(0xffffff),
+        100,
+        30
       );
-      box.add(
-        this.add.text(x + 10, top + 16, fmt(stats[chip.key]), {
-          fontFamily: FONT_FAMILY,
-          fontSize: "16px",
-          fontStyle: "800",
-          color: delta > 0 ? "#6be39a" : delta < 0 ? "#ff6b5f" : TEXT.white,
-        })
-      );
+      const labelColor = Phaser.Display.Color.RGBToString(Math.round(lc.r), Math.round(lc.g), Math.round(lc.b));
 
-      if (delta !== 0) {
-        box.add(
-          this.add
-            .text(x + cw - 6, top + h - 5, `${delta > 0 ? "▲" : "▼"}${fmt(Math.abs(delta))}`, {
-              fontFamily: FONT_FAMILY,
-              fontSize: "11px",
-              fontStyle: "700",
-              color: delta > 0 ? "#6be39a" : "#ff6b5f",
-            })
-            .setOrigin(1, 1)
-        );
+      const tile = this.add.graphics();
+      tile.fillStyle(0x07080b, 0.9);
+      tile.fillRoundedRect(left, top, cw, h, 7);
+      tile.fillStyle(guard ? UI_COLORS.guard : chip.color, guard ? 0.16 : 0.1);
+      tile.fillRoundedRect(left, top, cw, h, 7);
+      tile.lineStyle(1, guard ? UI_COLORS.guard : chip.color, guard ? 0.8 : 0.38);
+      tile.strokeRoundedRect(left + 0.5, top + 0.5, cw - 1, h - 1, 7);
+      box.add(tile);
+      const hover = this.add.graphics().setAlpha(0);
+      hover.fillStyle(chip.color, 0.14);
+      hover.fillRoundedRect(left, top, cw, h, 7);
+      hover.lineStyle(1.5, chip.color, 1);
+      hover.strokeRoundedRect(left + 0.75, top + 0.75, cw - 1.5, h - 1.5, 7);
+      box.add(hover);
+
+      const iconKey = isStyledStat(chip.key) ? statIconKey(chip.key) : null;
+      const iconSize = 18;
+      let labelX = left + 12;
+      if (iconKey && this.textures.exists(iconKey)) {
+        box.add(this.add.image(left + 11 + iconSize / 2, 0, iconKey).setDisplaySize(iconSize, iconSize));
+        labelX = left + 11 + iconSize + 8;
       }
 
-      // Hover: the stat color sweeps across the chip, then the full name fades in.
-      const fill = this.add.graphics();
-      const name = this.add
-        .text(0, 0, STAT_INFO[chip.key].name, {
-          fontFamily: FONT_FAMILY,
-          fontSize: "13px",
-          fontStyle: "800",
-          color: "#121315",
-          align: "center",
-          wordWrap: { width: cw - 12 },
+      const label = this.add
+        .text(labelX, 0.5, chip.label, {
+          fontFamily: FONT_DISPLAY,
+          fontSize: "14px",
+          fontStyle: "700",
+          color: labelColor,
         })
-        .setOrigin(0.5)
+        .setLetterSpacing(1.2)
+        .setOrigin(0, 0.5);
+      box.add(label);
+
+      // On hover the short label gives way to the stat's full name.
+      const full = this.add
+        .text(labelX, 0.5, STAT_INFO[chip.key].name, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "11.5px",
+          fontStyle: "700",
+          color: statColor,
+        })
+        .setOrigin(0, 0.5)
         .setAlpha(0);
-      box.add([fill, name]);
-      const sweep = { p: 0 };
-      const drawFill = (): void => {
-        fill.clear();
-        const fw = cw * sweep.p;
-        if (fw <= 0) return;
-        fill.fillStyle(chip.color, 1);
-        fill.fillRoundedRect(x, top, fw, h, Math.min(7, fw / 2));
-      };
-      const hoverTo = (p: number): void => {
-        this.tweens.killTweensOf([sweep, name]);
-        this.tweens.add({ targets: sweep, p, duration: 220, ease: "Cubic.easeOut", onUpdate: () => fill.active && drawFill() });
-        this.tweens.add({ targets: name, alpha: p, delay: p ? 120 : 0, duration: p ? 160 : 100 });
-      };
+      box.add(full);
 
-      // While hovered: a copy of the chip's outline grows out ~8px and fades,
-      // on repeat (the same pulse as the ready ultimate badge).
-      const ring = this.add.graphics().setVisible(false);
-      ring.lineStyle(3, chip.color, 1);
-      ring.strokeRoundedRect(x, top, cw, h, 7);
-      box.add(ring);
-      const pulse = this.tweens.add({
-        targets: ring,
-        scaleX: { from: 1, to: 1 + 16 / cw },
-        scaleY: { from: 1, to: 1 + 16 / h },
-        alpha: { from: 0.9, to: 0 },
-        duration: 1100,
-        repeat: -1,
-        paused: true,
-      });
-      box.once("destroy", () => this.tweens.killTweensOf([ring, sweep, name]));
+      const valueColor = guard ? UI_COLORS.ivory : delta > 0 ? UI_COLORS.up : delta < 0 ? UI_COLORS.down : UI_COLORS.ivory;
+      const value = this.add
+        .text(left + cw - 12, 0, fmt(stats[chip.key]), {
+          fontFamily: FONT_NUM,
+          fontSize: "22px",
+          fontStyle: "600",
+          color: valueColor,
+        })
+        .setOrigin(1, 0.5);
+      box.add(value);
 
-      const hit = this.add.zone(x, top, cw, h).setOrigin(0).setInteractive({ useHandCursor: true });
+      // Guard bonus or change since the start, just left of the number.
+      let marker: string | null = null;
+      let markerColor: string = valueColor;
+      if (guard) {
+        marker = `+${guardAmount(guard)}`;
+        markerColor = "#8fd3ff";
+      } else if (delta !== 0) {
+        marker = `${delta > 0 ? "▲" : "▼"}${fmt(Math.abs(delta))}`;
+      }
+      if (marker) {
+        box.add(
+          this.add
+            .text(value.x - value.width - 6, 1, marker, {
+              fontFamily: FONT_NUM,
+              fontSize: "12px",
+              fontStyle: "700",
+              color: markerColor,
+            })
+            .setOrigin(1, 0.5)
+        );
+      }
+
+      const hit = this.add.zone(left, top, cw, h).setOrigin(0).setInteractive({ useHandCursor: true });
       box.add(hit);
       hit.on("pointerover", () => {
-        ring.setVisible(true);
-        pulse.restart();
-        hoverTo(1);
+        hover.setAlpha(1);
+        if (!marker) {
+          label.setAlpha(0);
+          full.setAlpha(1);
+        }
       });
       hit.on("pointerout", () => {
-        pulse.pause();
-        ring.setVisible(false);
-        hoverTo(0);
+        hover.setAlpha(0);
+        label.setAlpha(1);
+        full.setAlpha(0);
       });
       hit.on("pointerdown", () => this.toggleStatInfo(container, box, chip.key, chip.color, cw, h));
     });
@@ -1587,7 +1691,7 @@ export class BattleScene extends Phaser.Scene {
 
   // The settings dropdown: a tab hugging the gear that widens into a panel
   // below it, with a volume slider, a stepped replay speed slider and, at the
-  // bottom, an account settings button and Leave
+  // bottom, an account settings button (placeholder for now) and Leave
   // Match. Esc opens it too; a click anywhere outside it (or on the gear, or
   // Esc again) closes it.
   openSettings(): void {
@@ -1649,20 +1753,15 @@ export class BattleScene extends Phaser.Scene {
       );
     });
 
-    // Account settings, at the bottom: asks first, since it leaves the match.
-    // Without an account (online features off) there's nothing to show.
+    // Account settings, at the bottom: not designed yet, so the button just
+    // says so.
     const account = createButton(this, pad, 146, w - pad * 2, 32, "Account settings", {
       color: COLORS.restart,
       hoverColor: COLORS.restartHover,
       onClick: () => {
-        if (!this.onAccountSettings) {
-          const text = account.container.getAt(1) as Phaser.GameObjects.Text;
-          text.setText("Not logged in");
-          this.time.delayedCall(1200, () => text.active && text.setText("Account settings"));
-          return;
-        }
-        this.closeSettings();
-        void this.openAccountSettings();
+        const text = account.container.getAt(1) as Phaser.GameObjects.Text;
+        text.setText("Coming soon");
+        this.time.delayedCall(1200, () => text.active && text.setText("Account settings"));
       },
     });
     body.add(account.container);
@@ -1913,21 +2012,21 @@ export class BattleScene extends Phaser.Scene {
       chips.push({ text: `${describeEffect(effect)} · ${remaining}t`, color: positive ? CHIP_COLOR.up : CHIP_COLOR.down });
     }
 
-    const h = 18;
+    const h = 21;
     let x = STRIP_PAD;
     for (let i = 0; i < chips.length; i++) {
       const chip = chips[i];
       if (!chip) break;
       const text = this.add
-        .text(0, y + h / 2, chip.text, { fontFamily: FONT_FAMILY, fontSize: "10px", fontStyle: "600", color: TEXT.white })
+        .text(0, y + h / 2, chip.text, { fontFamily: FONT_FAMILY, fontSize: "12px", fontStyle: "700", color: TEXT.white })
         .setOrigin(0, 0.5);
-      const w = text.width + 14;
+      const w = text.width + 18;
       const moreW = 34;
       if (x + w > maxX - (i < chips.length - 1 ? moreW : 0)) {
         text.destroy();
         container.add(
           this.add
-            .text(x, y + h / 2, `+${chips.length - i}`, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
+            .text(x, y + h / 2, `+${chips.length - i}`, { fontFamily: FONT_NUM, fontSize: "13px", color: UI_COLORS.body })
             .setOrigin(0, 0.5)
         );
         break;
@@ -1935,7 +2034,9 @@ export class BattleScene extends Phaser.Scene {
       const bg = this.add.graphics();
       bg.fillStyle(chip.color, 1);
       bg.fillRoundedRect(x, y, w, h, h / 2);
-      text.setX(x + 7);
+      bg.lineStyle(1, 0xffffff, 0.18);
+      bg.strokeRoundedRect(x + 0.5, y + 0.5, w - 1, h - 1, h / 2);
+      text.setX(x + 9);
       container.add([bg, text]);
       x += w + 6;
     }
@@ -1946,26 +2047,28 @@ export class BattleScene extends Phaser.Scene {
     const ready = canUseUltimate(fighter);
     let barX = x0;
     if (this.textures.exists(ULTIMATE_ICON_KEY)) {
-      container.add(this.add.image(x0 + 7, y, ULTIMATE_ICON_KEY).setDisplaySize(16, 16));
-      barX = x0 + 22;
+      container.add(this.add.image(x0 + 9, y, ULTIMATE_ICON_KEY).setDisplaySize(18, 18));
+      barX = x0 + 26;
     }
     const barW = w - (barX - x0) - 64;
     const g = this.add.graphics();
     g.fillStyle(COLORS.meterTrack, 1);
-    g.fillRoundedRect(barX, y - 5, barW, 10, 5);
+    g.fillRoundedRect(barX, y - 6, barW, 12, 6);
+    g.lineStyle(1, GOLD, 0.22);
+    g.strokeRoundedRect(barX + 0.5, y - 5.5, barW - 1, 11, 5.5);
     const bw = barW * Math.min(1, fighter.ultimateMeter / cost);
     if (bw > 0) {
       g.fillStyle(ready ? COLORS.ultimateHover : COLORS.meterFill, 1);
-      g.fillRoundedRect(barX, y - 5, bw, 10, Math.min(5, bw / 2));
+      g.fillRoundedRect(barX, y - 6, bw, 12, Math.min(6, bw / 2));
     }
     container.add(g);
 
     const label = this.add
-      .text(x0 + w - 8, y, ready ? "READY!" : `${fmt(fighter.ultimateMeter)}/${cost}`, {
-        fontFamily: FONT_FAMILY,
-        fontSize: ready ? "12px" : "11px",
-        fontStyle: "800",
-        color: ready ? "#ffd23f" : TEXT.muted,
+      .text(x0 + w - 4, y, ready ? "READY!" : `${fmt(fighter.ultimateMeter)} / ${cost}`, {
+        fontFamily: FONT_NUM,
+        fontSize: "14px",
+        fontStyle: "700",
+        color: ready ? "#ffd23f" : UI_COLORS.body,
       })
       .setOrigin(1, 0.5);
     container.add(label);
@@ -1990,9 +2093,9 @@ export class BattleScene extends Phaser.Scene {
     return 0;
   }
 
-  // Like the CPU portrait minus HP (that's on your strip right above): class
-  // icon, side label, name and ultimate status, with the meter as a yellow
-  // ring around the edge. Clicking it toggles the ultimate when it's usable.
+  // Your class badge under the player band: class icon, side label, name and
+  // ultimate status, with the meter as a yellow ring around the edge.
+  // Clicking it toggles the ultimate when it's usable.
   drawClassBadge(locked: boolean): void {
     const { w, h } = CLASS_BADGE;
     const c = this.classBadge;
@@ -2002,9 +2105,7 @@ export class BattleScene extends Phaser.Scene {
     const ready = canUseUltimate(player);
     const usable = !locked && (this.stagedUltimate || !checkPlan(player, this.staged, true, this.orders).problem);
 
-    const bg = this.add.graphics();
-    bg.fillStyle(COLORS.panel, 1);
-    bg.fillRoundedRect(0, 0, w, h, BADGE_RADIUS);
+    const bg = drawGlass(this.add.graphics(), 0, 0, w, h, BADGE_RADIUS);
     if (ready) {
       bg.fillStyle(ULT_RING_LIVE, this.stagedUltimate ? 0.22 : 0.12);
       bg.fillRoundedRect(0, 0, w, h, BADGE_RADIUS);
@@ -2034,35 +2135,56 @@ export class BattleScene extends Phaser.Scene {
       c.add(pulse);
     }
 
-    const cx = w / 2;
-    c.add(this.add.circle(cx, 48, 32, COLORS.meterTrack));
+    // Medallion on the left, text on the right (as in the lobby's inspector).
+    const mx = 50;
+    const my = h / 2;
+    c.add(this.add.circle(mx, my, 33, 0x0b0d13));
+    c.add(this.add.circle(mx, my, 33.5, 0x000000, 0).setStrokeStyle(1.5, GOLD, 0.65));
     const iconKey = classIconKey(player.classDef.id);
     if (this.textures.exists(iconKey)) {
-      c.add(this.add.image(cx, 48, iconKey).setDisplaySize(44, 44));
+      c.add(this.add.image(mx, my, iconKey).setDisplaySize(46, 46));
     }
-    c.add(
-      this.add.text(cx, 86, this.playerLabel.toUpperCase(), { fontFamily: FONT_FAMILY, fontSize: "11px", fontStyle: "700", color: TEXT.muted }).setOrigin(0.5, 0)
-    );
-    c.add(
-      this.add.text(cx, 102, this.displayName(player), {
-        fontFamily: FONT_FAMILY,
-        fontSize: "15px",
-        fontStyle: "700",
-        color: TEXT.white,
-        align: "center",
-        wordWrap: { width: w - 24 },
-      }).setOrigin(0.5, 0)
-    );
-    let ult: string;
-    if (this.stagedUltimate) ult = "ULTIMATE ✓ · click to undo";
-    else if (ready && usable) ult = "ULTIMATE READY · click";
-    else if (ready) ult = "ULTIMATE READY";
-    else ult = `ULT ${fmt(player.ultimateMeter)}/${cost}`;
+    const tx = 96;
+    const tw = w - tx - 12;
     c.add(
       this.add
-        .text(cx, 130, ult, { fontFamily: FONT_FAMILY, fontSize: "12px", fontStyle: "800", color: ready ? "#ffd23f" : TEXT.muted })
-        .setOrigin(0.5, 0)
+        .text(tx, 12, "CLASS", {
+          fontFamily: FONT_DISPLAY,
+          fontSize: "10.5px",
+          fontStyle: "700",
+          color: GOLD_CSS,
+        })
+        .setLetterSpacing(2.6)
     );
+    const nameText = this.add.text(tx, 27, this.displayName(player), {
+      fontFamily: FONT_DISPLAY,
+      fontSize: "18px",
+      fontStyle: "700",
+      color: UI_COLORS.ivory,
+    });
+    if (nameText.width > tw) nameText.setScale(tw / nameText.width);
+    c.add(nameText);
+    let ult: string;
+    if (this.stagedUltimate) ult = "ULTIMATE ✓ · undo";
+    else if (ready && usable) ult = "ULTIMATE · CLICK";
+    else if (ready) ult = "ULTIMATE READY";
+    else ult = `ULT ${fmt(player.ultimateMeter)} / ${cost}`;
+    const ultText = this.add.text(0, 0, ult, {
+      fontFamily: FONT_NUM,
+      fontSize: "14px",
+      fontStyle: "700",
+      color: ready ? "#ffd23f" : UI_COLORS.body,
+    });
+    const ultIcon = this.textures.exists(ULTIMATE_ICON_KEY)
+      ? this.add.image(8, ultText.height / 2, ULTIMATE_ICON_KEY).setDisplaySize(16, 16)
+      : null;
+    const iconW = ultIcon ? 22 : 0;
+    const ultGroup = this.add.container(tx, 58);
+    if (ultIcon) ultGroup.add(ultIcon);
+    ultText.setPosition(iconW, 0);
+    if (ultText.width > tw - iconW) ultText.setScale((tw - iconW) / ultText.width);
+    ultGroup.add(ultText);
+    c.add(ultGroup);
 
     if (usable) {
       bg.setInteractive(new Phaser.Geom.Rectangle(0, 0, w, h), Phaser.Geom.Rectangle.Contains);
@@ -2071,38 +2193,186 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  drawEndTurnRing(): void {
-    const c = this.endTurnRing;
-    c.removeAll(true);
+  // The AP panel above End turn, in the right column: "ACTION POINTS", the
+  // big "left / max" count and one crystal per AP of this round --
+  //   available: a lit cyan crystal,
+  //   reserved:  AP the staged cards will spend (dashed gold, pulsing),
+  //   preview:   AP the card you're looking at would spend (gold, blinking),
+  //   spent:     an empty socket.
+  // End turn is the button at the bottom of the same panel.
+  createEndTurnBar(): void {
+    const { x, y, w, h } = AP_PANEL;
+    const bar = this.add.container(x, y);
+    this.endTurnBar = bar;
+    bar.add(drawGlass(this.add.graphics(), 0, 0, w, h, 14, { glow: true, edge: 0.45 }));
+
+    bar.add(
+      this.add
+        .text(14, 14, "ACTION POINTS", {
+          fontFamily: FONT_DISPLAY,
+          fontSize: "11px",
+          fontStyle: "700",
+          color: GOLD_CSS,
+        })
+        .setLetterSpacing(1.8)
+    );
+    this.apMax = this.add
+      .text(w - 14, 33, "", { fontFamily: FONT_NUM, fontSize: "17px", fontStyle: "600", color: UI_COLORS.body })
+      .setOrigin(1, 0.5);
+    this.apCount = this.add
+      .text(0, 28, "", { fontFamily: FONT_NUM, fontSize: "38px", fontStyle: "700", color: "#bff0ff" })
+      .setOrigin(1, 0.5);
+    this.apCount.setShadow(0, 0, "rgba(95, 212, 255, 0.6)", 12, false, true);
+    bar.add([this.apCount, this.apMax]);
+    this.endTurnPips = this.add.container(w / 2, AP_CRYSTAL_Y);
+    bar.add(this.endTurnPips);
+
+    // The End turn button.
+    const b = { x: END_TURN.x - x, y: END_TURN.y - y, w: END_TURN.w, h: END_TURN.h };
+    const button = this.add.graphics();
+    button.fillStyle(0x161a26, 1);
+    button.fillRoundedRect(b.x, b.y, b.w, b.h, 10);
+    button.fillStyle(GOLD, 0.06);
+    button.fillRoundedRect(b.x, b.y, b.w, b.h / 2, { tl: 10, tr: 10, bl: 0, br: 0 });
+    button.lineStyle(1.5, GOLD, 0.7);
+    button.strokeRoundedRect(b.x + 0.75, b.y + 0.75, b.w - 1.5, b.h - 1.5, 10);
+    bar.add(button);
+
+    this.endTurnHover = this.add.graphics();
+    this.endTurnHover.fillStyle(UI_COLORS.bronzeHi, 0.12);
+    this.endTurnHover.fillRoundedRect(b.x, b.y, b.w, b.h, 10);
+    this.endTurnHover.setVisible(false);
+    bar.add(this.endTurnHover);
+
+    this.endTurnTitle = this.add
+      .text(b.x + b.w / 2, b.y + 9, "END TURN", {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "17px",
+        fontStyle: "700",
+        color: UI_COLORS.ivory,
+      })
+      .setLetterSpacing(2.4)
+      .setOrigin(0.5, 0);
+    bar.add(this.endTurnTitle);
+
+    this.endTurnSub = this.add
+      .text(b.x + b.w / 2, b.y + 33, "", {
+        fontFamily: FONT_FAMILY,
+        fontSize: "12px",
+        fontStyle: "600",
+        color: UI_COLORS.body,
+      })
+      .setOrigin(0.5, 0);
+    bar.add(this.endTurnSub);
+
+    const hit = this.add.zone(b.x, b.y, b.w, b.h).setOrigin(0).setInteractive({ useHandCursor: true });
+    this.endTurnHit = hit;
+    bar.add(hit);
+    hit.on("pointerover", () => this.endTurnEnabled && this.endTurnHover.setVisible(true));
+    hit.on("pointerout", () => this.endTurnHover.setVisible(false));
+    hit.on("pointerdown", () => {
+      if (this.endTurnEnabled) this.onEndTurnClick();
+    });
+  }
+
+  updateEndTurnBar(locked: boolean): void {
     const player = this.battle.player;
     const max = player.maxAp ?? player.ap;
-    if (max <= 0) return;
     const planning = !this.pendingTurn && this.canAct();
     const left = planning ? this.plannedAp() : player.ap;
     const preview = planning ? Math.min(left, this.pendingSpend()) : 0;
+    const plays = this.staged.length + (this.stagedUltimate ? 1 : 0) + this.orders.length;
 
-    // Starts at 12 o'clock and runs clockwise, like a timer.
-    const seg = (Math.PI * 2) / max;
-    const gap = max > 1 ? END_TURN_RING_GAP : 0;
-    const { x, y } = END_TURN;
+    this.endTurnEnabled = !locked;
+    this.endTurnBar.setAlpha(locked ? 0.6 : 1);
+    this.endTurnSub.setText(plays > 0 ? `${plays} staged · ${player.ap - left} AP reserved` : "Lock in this turn");
+    this.apMax.setText(`/ ${max} AP`);
+    this.apCount.setText(fmt(left)).setX(this.apMax.x - this.apMax.width - 6);
+    this.apCount.setColor(left > 0 ? "#bff0ff" : UI_COLORS.muted);
+    this.endTurnPips.removeAll(true);
+
+    // Crystal size fits the row: big for a 2-3 AP round, smaller at 10.
+    const rowW = AP_PANEL.w - 28;
+    const cw = Phaser.Math.Clamp(rowW / Math.max(1, max) - 7, 14, 32);
+    const ch = cw * 1.38;
+    const gap = cw + 7;
+    const startX = -((max - 1) * gap) / 2;
     for (let i = 0; i < max; i++) {
-      const start = -Math.PI / 2 + i * seg + gap / 2;
-      const end = start + seg - gap;
-      const arc = this.add.graphics();
-      if (i < left) {
-        arc.lineStyle(END_TURN_RING_W, AP_RING_LIVE, 1);
-        if (i >= left - preview) {
-          this.tweens.add({ targets: arc, alpha: 0.35, duration: 380, yoyo: true, repeat: -1 });
-          arc.once("destroy", () => this.tweens.killTweensOf(arc));
-        }
-      } else {
-        arc.lineStyle(END_TURN_RING_W, AP_RING_SPENT, 1);
+      let state: "available" | "preview" | "reserved" | "spent";
+      if (i < left - preview) state = "available";
+      else if (i < left) state = "preview";
+      else if (i < player.ap) state = "reserved";
+      else state = "spent";
+      const crystal = this.drawApCrystal(state, cw / 2, ch / 2);
+      crystal.setPosition(startX + i * gap, 0);
+      if (state === "preview" || state === "reserved") {
+        this.tweens.add({
+          targets: crystal,
+          alpha: state === "preview" ? 0.35 : 0.6,
+          duration: state === "preview" ? 380 : 900,
+          yoyo: true,
+          repeat: -1,
+          ease: "Sine.easeInOut",
+        });
+        crystal.once("destroy", () => this.tweens.killTweensOf(crystal));
       }
-      arc.beginPath();
-      arc.arc(x, y, END_TURN_RING_R, start, end, false);
-      arc.strokePath();
-      c.add(arc);
+      this.endTurnPips.add(crystal);
     }
+
+    if (locked) this.endTurnHit.disableInteractive();
+    else this.endTurnHit.setInteractive({ useHandCursor: true });
+  }
+
+  // One AP crystal: a faceted diamond, a (half width), b (half height).
+  drawApCrystal(state: "available" | "preview" | "reserved" | "spent", a: number, b: number): Phaser.GameObjects.Graphics {
+    const g = this.add.graphics();
+    const V = (x: number, y: number): Phaser.Math.Vector2 => new Phaser.Math.Vector2(x, y);
+    const diamond = (k: number): Phaser.Math.Vector2[] => [V(0, -b * k), V(a * k, 0), V(0, b * k), V(-a * k, 0)];
+    if (state === "spent") {
+      g.fillStyle(0x05060a, 0.85);
+      g.fillPoints(diamond(1), true);
+      g.lineStyle(1.5, 0x5a5f6c, 0.9);
+      g.strokePoints(diamond(1), true);
+      return g;
+    }
+    if (state === "reserved") {
+      g.fillStyle(AP_RESERVED, 0.22);
+      g.fillPoints(diamond(1), true);
+      // Dashed gold outline.
+      const pts = diamond(1);
+      g.lineStyle(1.6, AP_RESERVED, 1);
+      for (let e = 0; e < 4; e++) {
+        const p = pts[e] as Phaser.Math.Vector2;
+        const q = pts[(e + 1) % 4] as Phaser.Math.Vector2;
+        const len = Phaser.Math.Distance.BetweenPoints(p, q);
+        const dash = Math.max(3, b * 0.28);
+        for (let t = 0; t < len; t += dash * 1.8) {
+          const t2 = Math.min(len, t + dash);
+          g.lineBetween(p.x + ((q.x - p.x) * t) / len, p.y + ((q.y - p.y) * t) / len, p.x + ((q.x - p.x) * t2) / len, p.y + ((q.y - p.y) * t2) / len);
+        }
+      }
+      return g;
+    }
+    const lit = state === "preview" ? AP_RESERVED : AP_LIVE;
+    const light = state === "preview" ? 0xffe7a8 : 0xb8f1ff;
+    const dark = state === "preview" ? 0x9a6a14 : 0x0f6d9c;
+    // Glow, body, a light facet on the upper left, a dark one lower right,
+    // a highlight and a bright rim.
+    g.fillStyle(lit, 0.16);
+    g.fillPoints(diamond(1.45), true);
+    g.fillStyle(lit, 0.22);
+    g.fillPoints(diamond(1.2), true);
+    g.fillStyle(lit, 1);
+    g.fillPoints(diamond(1), true);
+    g.fillStyle(light, 0.75);
+    g.fillTriangle(0, -b, -a, 0, 0, 0);
+    g.fillStyle(dark, 0.7);
+    g.fillTriangle(0, b, a, 0, 0, 0);
+    g.fillStyle(0xffffff, 0.8);
+    g.fillTriangle(-a * 0.15, -b * 0.7, -a * 0.55, -b * 0.15, -a * 0.2, -b * 0.2);
+    g.lineStyle(1.4, light, 1);
+    g.strokePoints(diamond(1), true);
+    return g;
   }
 
   renderHand(locked: boolean): void {
@@ -2110,17 +2380,17 @@ export class BattleScene extends Phaser.Scene {
     // Picked cards have moved onto the arena slot.
     const stagedIds = new Set(this.staged.map((c) => c.id));
     const cards = this.battle.player.hand.filter((c) => !stagedIds.has(c.id) && c.id !== this.previewedCardId);
-    // Between the class badge on the left and the End turn ring on the right;
+    // Between the class badge on the left and the right edge of the board;
     // a hand too big for that squeezes its overlap instead of covering them.
-    const minX = CLASS_BADGE.x + CLASS_BADGE.w + 8;
-    const maxX = END_TURN.x - END_TURN_RING_R - END_TURN_RING_W / 2 - 12;
+    const minX = STRIP_X;
+    const maxX = STRIP_X + STRIP_W;
     let step = CARD_W - FAN_OVERLAP;
     if (cards.length > 1 && (cards.length - 1) * step + CARD_W > maxX - minX) {
       step = (maxX - minX - CARD_W) / (cards.length - 1);
     }
     const totalW = cards.length > 0 ? (cards.length - 1) * step + CARD_W : 0;
     // Centered on the board, shifted aside if it would reach the badge or ring.
-    const x0 = Math.max(minX, Math.min(GAME_WIDTH / 2 - totalW / 2, maxX - totalW));
+    const x0 = Math.max(minX, Math.min((minX + maxX) / 2 - totalW / 2, maxX - totalW));
     cards.forEach((card, i) => this.drawHandCard(card, x0 + i * step, locked));
   }
 
@@ -2130,16 +2400,27 @@ export class BattleScene extends Phaser.Scene {
     return { ...cardFaceData(card), costShort: !this.pendingTurn && cardCost(card) > this.plannedAp() };
   }
 
+  // Whether a hand card can be played right now (it glows). The tutorial
+  // also requires it to be the card the current step is about.
+  handCardPlayable(card: Card, locked: boolean): boolean {
+    return !locked && !this.pendingTurn && !unplayableReason(this.battle.player, card, this.staged, this.orders);
+  }
+
   drawHandCard(card: Card, x: number, locked: boolean): void {
-    const { container: cardContainer, bg } = drawCardFace(this, this.handFace(card), CARD_W, CARD_H);
+    const face = { ...this.handFace(card), playable: this.handCardPlayable(card, locked) };
+    const { container: cardContainer, bg, glow } = drawCardFace(this, face, CARD_W, CARD_H);
+    if (glow) {
+      this.tweens.add({ targets: glow, alpha: 0.45, duration: 1100, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      glow.once("destroy", () => this.tweens.killTweensOf(glow));
+    }
     cardContainer.setPosition(x, 0);
     if (locked) {
-      cardContainer.setAlpha(0.5);
+      this.dimCard(cardContainer, 0.5);
       bg.disableInteractive();
     } else {
       // Can't be paid for after what's already picked: dimmed, but it can
       // still be opened to read (the preview says why it can't be played).
-      if (unplayableReason(this.battle.player, card, this.staged, this.orders)) cardContainer.setAlpha(0.55);
+      if (unplayableReason(this.battle.player, card, this.staged, this.orders)) this.dimCard(cardContainer, 0.45);
       // Hover expands the card, growing up from its bottom edge.
       bg.on("pointerover", (pointer: Phaser.Input.Pointer) => {
         if (pointer.wasTouch) return;
@@ -2160,6 +2441,15 @@ export class BattleScene extends Phaser.Scene {
       bg.on("pointerdown", () => this.onCardClick(card.id));
     }
     this.handContainer.add(cardContainer);
+  }
+
+  // Darken a hand card with a shade on top rather than container alpha, so
+  // overlapping cards don't show through each other.
+  dimCard(cardContainer: Phaser.GameObjects.Container, amount: number): void {
+    const shade = this.add.graphics();
+    shade.fillStyle(0x07080b, amount);
+    shade.fillRoundedRect(0, 0, CARD_W, CARD_H, 9 * (CARD_W / 143));
+    cardContainer.add(shade);
   }
 
   // The previewed card, full size in the middle of the screen over a dimmed
@@ -2211,7 +2501,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   // Picking a target: the board dims, and every legal target on the enemy
-  // side (their fighter -- strip or portrait -- and their monsters) lights up
+  // side (their fighter band and their monsters) lights up
   // to be clicked. A guard monster has to be picked first. Clicking anywhere
   // else cancels.
   drawTargeting(): void {
@@ -2241,7 +2531,6 @@ export class BattleScene extends Phaser.Scene {
       this.previewLayer.add(g);
     };
     box(STRIP_X, CPU_STRIP_Y, STRIP_W, STRIP_H, { kind: "fighter" });
-    box(PORTRAIT_X, CPU_PORTRAIT_Y, PORTRAIT_W, PORTRAIT_H, { kind: "fighter" });
     opponent.field.forEach((monster, i) => {
       const pos = this.monsterPos("cpu", i);
       box(pos.x - 3, pos.y - 3, MONSTER_W + 6, MONSTER_H + 6, { kind: "monster", uid: monster.uid });
@@ -2356,18 +2645,18 @@ export class BattleScene extends Phaser.Scene {
   drawSlots(): void {
     this.slotsContainer.removeAll(true);
     const pending = this.pendingTurn;
+    const stagedCount = pending ? 0 : this.staged.length + (this.stagedUltimate ? 1 : 0);
     const muted = (x: number, text: string): Phaser.GameObjects.Text =>
       this.add
         .text(x + SLOT_W / 2, SLOT_Y + SLOT_H / 2, text, { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted, align: "center" })
         .setOrigin(0.5);
     const sides: Array<{ key: "player" | "cpu"; x: number }> = [
-      { key: "cpu", x: GAME_WIDTH / 2 - SLOT_TOTAL_W / 2 },
-      { key: "player", x: GAME_WIDTH / 2 + SLOT_TOTAL_W / 2 - SLOT_W },
+      { key: "cpu", x: PLAY_ZONE_CX - SLOT_TOTAL_W / 2 },
+      { key: "player", x: PLAY_ZONE_CX + SLOT_TOTAL_W / 2 - SLOT_W },
     ];
     for (const { key, x } of sides) {
       const frame = this.add.graphics();
-      frame.lineStyle(2, 0x484b51, 1);
-      frame.strokeRoundedRect(x, SLOT_Y, SLOT_W, SLOT_H, 10);
+      drawGlass(frame, x, SLOT_Y, SLOT_W, SLOT_H, 14, { inset: true, edge: 0.32 });
       this.slotsContainer.add(frame);
 
       if (key === "cpu") {
@@ -2388,7 +2677,34 @@ export class BattleScene extends Phaser.Scene {
         faces.push({ data: { category: "ultimate", name: ultimateName(this.battle.player.classDef), description: "" }, cardId: null });
       }
       if (faces.length === 0) {
-        this.slotsContainer.add(muted(x, pending ? "Pass" : "Click a card,\nthen click it again\nto play it here"));
+        if (pending) {
+          this.slotsContainer.add(muted(x, "Pass"));
+        } else {
+          const cx = x + SLOT_W / 2;
+          const cy = SLOT_Y + SLOT_H / 2;
+          this.slotsContainer.add(
+            this.add
+              .text(cx, cy - 8, "+", {
+                fontFamily: FONT_FAMILY,
+                fontSize: "22px",
+                fontStyle: "400",
+                color: UI_COLORS.gold,
+              })
+              .setAlpha(0.45)
+              .setOrigin(0.5)
+          );
+          this.slotsContainer.add(
+            this.add
+              .text(cx, cy + 14, "STAGE", {
+                fontFamily: FONT_FAMILY,
+                fontSize: "12px",
+                fontStyle: "700",
+                color: UI_COLORS.body,
+              })
+              .setLetterSpacing(1.4)
+              .setOrigin(0.5, 0)
+          );
+        }
         continue;
       }
       const w = CARD_W * STAGE_SCALE;
@@ -2397,7 +2713,7 @@ export class BattleScene extends Phaser.Scene {
       const x0 = x + (SLOT_W - (w + step * (faces.length - 1))) / 2;
       faces.forEach(({ data, cardId }, i) => {
         const { container, bg } = drawCardFace(this, data, w, h, { scale: STAGE_SCALE });
-        container.setPosition(x0 + i * step, SLOT_Y + (SLOT_H - h) / 2 + 8);
+        container.setPosition(x0 + i * step, SLOT_Y + (SLOT_H - h) / 2);
         if (!pending && this.canAct()) {
           bg.on("pointerdown", () => (cardId === null ? this.onUltimateClick() : this.unstage(cardId)));
         } else {
@@ -2408,32 +2724,39 @@ export class BattleScene extends Phaser.Scene {
         if (target) {
           this.slotsContainer.add(
             this.add
-              .text(x0 + i * step + w / 2, SLOT_Y + (SLOT_H - h) / 2 + 8 + h + 3, `→ ${this.targetName(target)}`, {
+              .text(x0 + i * step + w / 2, SLOT_Y + (SLOT_H - h) / 2 + h, `→ ${this.targetName(target)}`, {
                 fontFamily: FONT_FAMILY,
-                fontSize: "9px",
+                fontSize: "11.5px",
                 fontStyle: "800",
                 color: "#ffd23f",
-                stroke: "#000000",
-                strokeThickness: 2,
+                backgroundColor: "#0b0d14",
+                padding: { x: 7, y: 2 },
               })
-              .setOrigin(0.5, 0)
+              .setOrigin(0.5, 0.5)
           );
         }
       });
-      this.slotsContainer.add(
-        this.add
-          .text(x + SLOT_W / 2, SLOT_Y + 6, pending ? "SENT" : "CLICK ONE TO TAKE IT BACK", {
-            fontFamily: FONT_FAMILY,
-            fontSize: "9px",
-            fontStyle: "700",
-            color: TEXT.muted,
-          })
-          .setOrigin(0.5, 0)
-      );
     }
+
+    const caption = pending
+      ? "SENT"
+      : stagedCount > 0
+        ? `${stagedCount} STAGED · CLICK THE CARD TO TAKE IT BACK`
+        : "STAGE · CLICK A CARD TO STAGE IT";
+    this.slotsContainer.add(
+      this.add
+        .text(PLAY_ZONE_CX, SLOT_Y + SLOT_H + 5, caption, {
+          fontFamily: FONT_FAMILY,
+          fontSize: "11.5px",
+          fontStyle: "700",
+          color: UI_COLORS.body,
+        })
+        .setLetterSpacing(1.2)
+        .setOrigin(0.5, 0)
+    );
   }
 
-  // Both monster fields, beside their owner's arena slot.
+  // Both monster fields, flanking the central play zone.
   drawFields(): void {
     this.fieldContainer.removeAll(true);
     const sides: Array<{ fighter: Fighter; x: number; label: string }> = [
@@ -2443,23 +2766,78 @@ export class BattleScene extends Phaser.Scene {
     for (const { fighter, x, label } of sides) {
       const field = fighter.field ?? [];
       const backing = this.add.graphics();
-      backing.fillStyle(0x0c0d0e, 0.5);
-      backing.fillRoundedRect(x, FIELD_Y, FIELD_W, FIELD_H, 10);
+      drawGlass(backing, x, FIELD_Y, FIELD_W, FIELD_H, 14);
       this.fieldContainer.add(backing);
-      this.fieldContainer.add(
-        this.add.text(x + 8, FIELD_Y + 5, `${label.toUpperCase()} ${field.length}/${FIELD_SIZE}`, {
-          fontFamily: FONT_FAMILY,
-          fontSize: "10px",
-          fontStyle: "700",
-          color: TEXT.muted,
+      const count = this.add
+        .text(x + FIELD_W - 12, FIELD_Y + 10, `${field.length} / ${FIELD_SIZE}`, {
+          fontFamily: FONT_NUM,
+          fontSize: "13px",
+          fontStyle: "600",
+          color: UI_COLORS.body,
         })
-      );
+        .setOrigin(1, 0);
+      const title = this.add
+        .text(x + 12, FIELD_Y + 10, label.toUpperCase(), {
+          fontFamily: FONT_DISPLAY,
+          fontSize: "12px",
+          fontStyle: "700",
+          color: GOLD_CSS,
+        })
+        .setLetterSpacing(1.3);
+      // A long opponent name shrinks instead of running into the count.
+      const room = FIELD_W - 24 - count.width - 10;
+      if (title.width > room) title.setScale(room / title.width);
+      this.fieldContainer.add([title, count]);
+
+      // Three sockets, like the preview: dashed bronze edges and a faint paw
+      // mark so the field reads as a place for monsters before one arrives.
+      const socketW = 66;
+      const socketGap = 9;
+      const socketY = FIELD_Y + 36;
+      const socketH = 132;
+      for (let i = 0; i < FIELD_SIZE; i++) {
+        const sx = x + 9 + i * (socketW + socketGap);
+        const socket = this.add.graphics();
+        drawGlass(socket, sx, socketY, socketW, socketH, 10, { inset: true, edge: 0.18 });
+        this.fieldContainer.add(socket);
+
+        if (!field[i]) {
+          const cx = sx + socketW / 2;
+          const cy = socketY + socketH / 2;
+          const paw = this.add.graphics();
+          paw.fillStyle(0x9a9da3, 0.5);
+          paw.fillEllipse(cx, cy + 4, 11, 8);
+          paw.fillCircle(cx - 6, cy - 3, 2.2);
+          paw.fillCircle(cx - 2, cy - 7, 2.2);
+          paw.fillCircle(cx + 2, cy - 7, 2.2);
+          paw.fillCircle(cx + 6, cy - 3, 2.2);
+          this.fieldContainer.add(paw);
+          this.fieldContainer.add(
+            this.add
+              .text(cx, cy + 16, "EMPTY", {
+                fontFamily: FONT_FAMILY,
+                fontSize: "11px",
+                fontStyle: "700",
+                color: UI_COLORS.muted,
+              })
+              .setLetterSpacing(1.2)
+              .setAlpha(0.85)
+              .setOrigin(0.5, 0)
+          );
+        }
+      }
+
       if (field.length === 0) {
         this.fieldContainer.add(
           this.add
-            .text(x + FIELD_W / 2, FIELD_Y + FIELD_H / 2 + 8, "no monsters", { fontFamily: FONT_FAMILY, fontSize: "11px", color: TEXT.muted })
+            .text(x + FIELD_W / 2, FIELD_Y + FIELD_H - 18, "No monsters yet", {
+              fontFamily: FONT_FAMILY,
+              fontSize: "13px",
+              fontStyle: "500",
+              color: UI_COLORS.muted,
+            })
             .setOrigin(0.5)
-            .setAlpha(0.7)
+            .setAlpha(0.8)
         );
       }
       field.forEach((monster, i) => {
@@ -2598,35 +2976,67 @@ export class BattleScene extends Phaser.Scene {
   renderLog(): void {
     this.logContainer.removeAll(true);
 
-    // Measure every entry offscreen first: at 192px wide each line wraps to
+    const bodyStyle = {
+      fontFamily: FONT_FAMILY,
+      fontSize: "13px",
+      color: "#e2e4e9",
+      wordWrap: { width: LOG_W - 24 },
+      lineSpacing: 2,
+    };
+    const roundStyle = {
+      fontFamily: FONT_DISPLAY,
+      fontSize: "11.5px",
+      fontStyle: "700",
+      color: GOLD_CSS,
+    };
+    const roundLine = /^-- Round (\d+) --$/;
+    const items = this.battle.log
+      .slice()
+      .reverse()
+      .map((line) => {
+        const match = line.match(roundLine);
+        if (match) {
+          const probe = this.add.text(0, 0, `ROUND ${match[1]}`, roundStyle);
+          const h = probe.height + 12;
+          probe.destroy();
+          return { line, round: match[1], height: h };
+        }
+        const probe = this.add.text(0, 0, line, bodyStyle);
+        const h = probe.height;
+        probe.destroy();
+        return { line, round: null, height: h };
+      });
+
+    // Measure every entry offscreen first: at 256px wide each line wraps to
     // a different height, so entries advance by measured height, never a
     // fixed step (which piled wrapped lines onto each other).
-    const style = {
-      fontFamily: FONT_FAMILY,
-      fontSize: "12px",
-      color: TEXT.body,
-      wordWrap: { width: LOG_W - 20 },
-    };
-    const heights: number[] = [];
-    let totalH = 0;
-    for (const line of this.battle.log) {
-      const probe = this.add.text(0, 0, line, style);
-      const h = probe.height;
-      probe.destroy();
-      heights.push(h);
-      totalH += h + LOG_ENTRY_GAP;
-    }
+    const heights = items.map((item) => item.height);
+    let totalH = heights.reduce((sum, h) => sum + h + LOG_ENTRY_GAP, 0);
     if (heights.length > 0) totalH -= LOG_ENTRY_GAP;
     this.logTotalHeight = totalH;
 
     this.logMaxScrollIndex = Math.max(0, totalH - LOG_H);
-    this.logScrollIndex = Phaser.Math.Clamp(this.logScrollIndex, 0, this.logMaxScrollIndex);
+    if (this.logFollow) this.logScrollIndex = this.logMaxScrollIndex;
+    else this.logScrollIndex = Phaser.Math.Clamp(this.logScrollIndex, 0, this.logMaxScrollIndex);
 
     let y = -this.logScrollIndex;
-    for (let i = 0; i < this.battle.log.length; i++) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
       const h = heights[i] as number;
       if (y + h >= 0 && y <= LOG_H) {
-        this.logContainer.add(this.add.text(0, y, this.battle.log[i] as string, style));
+        if (item.round) {
+          const headerY = y + 4;
+          const header = this.add
+            .text(0, headerY, `ROUND ${item.round}`, roundStyle)
+            .setLetterSpacing(1.4);
+          this.logContainer.add(header);
+          const divider = this.add.graphics();
+          divider.lineStyle(1, UI_COLORS.bronze, 0.42);
+          divider.lineBetween(0, headerY + header.height + 4, LOG_W - 20, headerY + header.height + 4);
+          this.logContainer.add(divider);
+        } else {
+          this.logContainer.add(this.add.text(0, y, item.line, bodyStyle));
+        }
       }
       y += h + LOG_ENTRY_GAP;
     }

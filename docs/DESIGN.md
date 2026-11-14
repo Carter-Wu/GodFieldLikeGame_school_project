@@ -92,6 +92,10 @@ From the team's "Card Design" doc; see `src/model/engine.ts` for the exact rules
   it again plays it onto your arena slot (only your client sees it until the turn ends),
   clicking anywhere else cancels. Picked cards can be clicked to take them back.
 - **UA charge**: cards can add extra ultimate meter when played (Master Craftsman).
+- **Setup order**: before any strike, both sides' non-attack cards take effect in one queue by
+  type — buffs, then debuffs, then defends, then monster summons. Where both sides played a
+  card of the same type, the same per-round dice (below) decide whose go first; a side's own
+  cards of one type keep their pick order. Costs (and "gain AP") are still paid in pick order.
 - **Priority and dice**: every attack card and ultimate of both sides goes in one queue by
   priority (fast cards first, Slow lowers it). Where the two sides tie on priority, each side
   rolls one die for the round and the higher roll goes first on every tie; a side's own
@@ -101,6 +105,22 @@ From the team's "Card Design" doc; see `src/model/engine.ts` for the exact rules
 - **Elements and statuses**: fire / water / electric affinity; Burn, Poison (stacks), Wet
   (electric +50%, fire −50% and dries), Acid (−DEF/ER), Slow, Blind (half damage). Water puts
   out Burn; Burn can't catch on a Wet target.
+- **Card rarity**: normal / rare / legend, by value per AP (`props.rarity`, shown on the card
+  face). Every effect is scored in damage-equivalent points (1 point = 1 damage):
+  damage / heal / lifesteal 1 each, priority +0.5 a level, interrupts +2, burn and poison
+  potency × rounds, blind 2 a round, slow 1 a round, acid potency × rounds × 0.5, wet 1,
+  ATK/DEF ±1 for a round 1, other stats 0.5, ultimate meter 0.6 a point, AP 3 each, a
+  draw or a cleanse 2, a defend that's used up on its first hit 0.9 × what it blocks (one that
+  lasts: × its rounds; percent defends assume 8 incoming damage a round), a monster
+  HP × 0.5 + ATK × 1.5 (+2 guard, +1 ability). The card costs AP × 3 + HP + meter × 0.6,
+  plus 1.5 for the card itself. Efficiency = points ÷ cost, relative to a plain 1-AP,
+  3-damage attack (1.0): below 1.4 normal, 1.4–2.0 rare, 2.0 and up legend. The weights are
+  first-pass guesses to tune with play. A deck (starter decks included) holds at most 3
+  copies of a normal card, 2 of a rare and 1 of a legend (`DECK_RULES.maxCopies`), and its
+  rare and legend cards share a budget of 12 points: 1 per rare copy, 2 per legend copy
+  (`DECK_RULES.maxRarityPoints`). To fit it, the Black Mage starter deck leaves out Mana Tap
+  and the Master Craftsman one Tinker and Masterwork Blade; they stay in those classes' pools
+  (0 copies in `class_deck_cards`).
 - **General cards** in every deck; **classes**: Guardian, Pyromancer, Black Mage, Master
   Craftsman, Necromancer.
 - **ATK stat**: flat bonus to attack cards (weapons, Craftsman's ultimate).

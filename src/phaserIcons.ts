@@ -9,10 +9,13 @@ import { cardIconMarkup, classIconMarkup, settingsIconMarkup, ultimateIconMarkup
 import { CARD_CATEGORY, type CardCategory } from "./model/cardTypes.ts";
 import type { DamageType, Element } from "./model/damageTypes.ts";
 import type { ClassDef } from "./model/classes.ts";
+import { STAT_STYLE, statIconMarkup, type StyledStat } from "./statIcons.ts";
 
 // Rasterized well above the largest on-screen icon size (~30px) so icons stay
 // sharp once the camera is zoomed for HiDPI screens (see theme.js).
-const ICON_TEXTURE_SIZE = 128;
+// Rasterized big enough to stay sharp at the largest size an icon is drawn
+// (the previewed card) times the camera zoom.
+const ICON_TEXTURE_SIZE = 256;
 
 export const CARD_ICON_KEY: Record<CardCategory, string> = {
   [CARD_CATEGORY.ATTACK]: "icon-card-attack",
@@ -24,7 +27,11 @@ export const CARD_ICON_KEY: Record<CardCategory, string> = {
 
 export const ULTIMATE_ICON_KEY = "icon-ultimate";
 export const SETTINGS_ICON_KEY = "icon-settings";
-export const CARD_FRAME_KEY = "ui-card-frame"; // raster art: public/ui/card-frame.webp
+export const BRAND_EMBLEM_KEY = "ui-zenkake-emblem"; // public/ui/zenkake-emblem.svg
+
+export function statIconKey(stat: StyledStat): string {
+  return `icon-stat-${stat}`;
+}
 
 export function classIconKey(classId: string): string {
   return `icon-class-${classId}`;
@@ -48,8 +55,11 @@ export function preloadIcons(scene: Phaser.Scene, classDefs: ClassDef[]): void {
   }
   queueSvg(scene, ULTIMATE_ICON_KEY, ultimateIconMarkup());
   queueSvg(scene, SETTINGS_ICON_KEY, settingsIconMarkup());
-  if (!scene.textures.exists(CARD_FRAME_KEY)) {
-    scene.load.image(CARD_FRAME_KEY, `${import.meta.env.BASE_URL}ui/card-frame.webp`);
+  for (const stat of Object.keys(STAT_STYLE) as StyledStat[]) {
+    queueSvg(scene, statIconKey(stat), statIconMarkup(stat));
+  }
+  if (!scene.textures.exists(BRAND_EMBLEM_KEY)) {
+    scene.load.svg(BRAND_EMBLEM_KEY, `${import.meta.env.BASE_URL}ui/zenkake-emblem.svg`, { width: 160, height: 160 });
   }
   for (const classDef of classDefs) {
     queueSvg(scene, classIconKey(classDef.id), classIconMarkup(classDef));
