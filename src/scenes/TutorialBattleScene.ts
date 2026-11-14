@@ -80,7 +80,7 @@ const hasOrder = (s: TutorialBattleScene, use: MonsterOrder["use"]): boolean => 
 function pickCardText(cardName: string, intro: string, extra = ""): (s: TutorialBattleScene) => string {
   return (s) => {
     const id = s.battle.player.hand.find((c) => c.name === cardName)?.cardId ?? "";
-    if (previewing(s, id)) return `Click ${cardName} again to play it.${extra ? ` ${extra}` : ""}\n\nThe blue gem in its corner is its AP cost.`;
+    if (previewing(s, id)) return `Click ${cardName} again to play it.${extra ? ` ${extra}` : ""}\n\nThe number in its top-left corner is its AP cost.`;
     return `${intro}\n\nClick ${cardName} in your hand to look at it.`;
   };
 }
@@ -129,16 +129,15 @@ const SCRIPT: ScriptedRound[] = [
         title: "Welcome!",
         info: true,
         text: () =>
-          `This practice match walks you through a real battle against a ${DUMMY_LABEL}.\n\n` +
-          "Bring its HP to 0 to win. Each step here tells you what to do next.",
+          `A guided practice match against a ${DUMMY_LABEL}.\n\n` + "Bring its HP to 0 to win. Follow the steps in this panel.",
       },
       {
         id: "you",
         title: "This is you",
         info: true,
         text: (s) =>
-          `You're playing ${s.playerClassName}. Your strip shows your HP, AP and stats (click a stat to read about it).\n\n` +
-          "Your class badge at the bottom right, above End turn, fills up with your ultimate meter.",
+          `You're the ${s.playerClassName}. Your band shows your HP and stats; click a stat to read about it.\n\n` +
+          "The class badge under this panel fills with your ultimate meter.",
         focus: () => LAYOUT.playerStrip,
       },
       {
@@ -146,8 +145,8 @@ const SCRIPT: ScriptedRound[] = [
         title: "Your opponent",
         info: true,
         text: () =>
-          `The ${DUMMY_LABEL} is at the top. Every round you both plan a turn at the same time, ` +
-          "without seeing each other's picks, and then both turns play out together.",
+          `The ${DUMMY_LABEL}'s band is at the top. Each round you both plan at the same time, ` +
+          "without seeing each other's picks. Then both turns play out together.",
         focus: () => LAYOUT.cpuStrip,
       },
       {
@@ -163,11 +162,11 @@ const SCRIPT: ScriptedRound[] = [
         title: "AP",
         info: true,
         text: () =>
-          "Cards cost AP. The crystals above End turn show yours: 2 this round, and Ember Dart has reserved 1 (the dashed gold one).\n\n" +
-          "Max AP goes up by 1 every round (up to 10). AP you don't spend is lost when the turn ends.",
+          "Cards cost AP. The crystals above End turn show yours: 2 this round, 1 reserved by Ember Dart (gold).\n\n" +
+          "Max AP grows by 1 each round, up to 10. Unspent AP is lost.",
         focus: focusApPanel,
       },
-      endTurnStep("end-1", "Press End turn to lock in your turn. Then watch the replay of both turns."),
+      endTurnStep("end-1", "Press End turn to lock it in, then watch both turns play out."),
     ],
   },
   // Round 2 (3 AP): resistances, defending, several cards in one turn.
@@ -180,9 +179,9 @@ const SCRIPT: ScriptedRound[] = [
         title: "Damage and resistances",
         info: true,
         text: () =>
-          "Both darts landed. Damage is lowered by the matching resistance:\n\n" +
-          "• Physical by DEF\n• Magic by MR\n• Element (fire, water, electric) by ER\n• True damage ignores them\n\n" +
-          "The dummy has hardly any ER, so your fire hits it hard.",
+          "Damage is lowered by the matching resistance:\n" +
+          "• Physical: DEF\n• Magic: MR\n• Element (fire, water, electric): ER\n• True: nothing\n\n" +
+          "The dummy has almost no ER, so fire hits it hard.",
         focus: () => LAYOUT.cpuStrip,
       },
       {
@@ -190,9 +189,8 @@ const SCRIPT: ScriptedRound[] = [
         title: "Defend cards",
         info: true,
         text: () =>
-          "The dummy is winding up a big Fire Lance this round.\n\n" +
-          "A defend card blocks one damage type. Turns happen at the same time, so a defend you play now " +
-          "already blocks an attack made this round.",
+          "The dummy is winding up a Fire Lance.\n\n" +
+          "A defend card blocks one damage type. Turns are simultaneous, so a defend played now blocks this round's attack.",
       },
       {
         id: "shroud",
@@ -208,7 +206,7 @@ const SCRIPT: ScriptedRound[] = [
         text: (s) =>
           previewing(s, "ember_dart")
             ? "Click Ember Dart again to play it."
-            : `You have 3 AP this round, so you can play several cards in one turn. Add ${
+            : `You have 3 AP, so you can play several cards in one turn. Add ${
                 stagedCount(s, "ember_dart") === 0 ? "both Ember Darts" : "the other Ember Dart"
               }.`,
         allow: { kind: "card", cardId: "ember_dart" },
@@ -228,13 +226,13 @@ const SCRIPT: ScriptedRound[] = [
         title: "Blocked!",
         info: true,
         text: () =>
-          "Heat Shroud soaked up the Fire Lance, and your ER handled the rest.\n\n" +
-          "A defend card only stops its own damage type, so match it to what's coming.",
+          "Heat Shroud soaked up the Fire Lance and your ER took the rest.\n\n" +
+          "A defend only stops its own damage type, so match it to what's coming.",
       },
       {
         id: "imp",
         title: "Monsters",
-        text: pickCardText("Flame Imp", "Monster cards summon a monster onto your field (up to 3)."),
+        text: pickCardText("Flame Imp", "Monster cards summon a monster to your field (up to 3)."),
         allow: { kind: "card", cardId: "flame_imp" },
         done: (s) => stagedCount(s, "flame_imp") >= 1,
         focus: focusHandCard("flame_imp"),
@@ -263,7 +261,7 @@ const SCRIPT: ScriptedRound[] = [
         title: "Monsters on the field",
         info: true,
         text: () =>
-          "You both have a Flame Imp now. A monster can't act the round it arrives. From the next round on, " +
+          "You both have a Flame Imp. A monster can't act the round it arrives. After that, " +
           "you give it an order each turn, paid with AP.",
         focus: (s) => s.monsterRect("player", 0),
       },
@@ -272,9 +270,9 @@ const SCRIPT: ScriptedRound[] = [
         title: "Pick a target",
         text: (s) => {
           if (aiming(s) && s.targeting?.kind === "card")
-            return "Click the dummy's Flame Imp.\n\nAttack cards hit before monsters act, so it won't get to attack you.";
+            return "Click the dummy's Flame Imp.\n\nAttack cards hit before monsters act, so it won't get to attack.";
           if (previewing(s, "fire_lance")) return "Click Fire Lance again, then pick its target.";
-          return "Attacks can hit the enemy fighter or one of their monsters.\n\nClick Fire Lance, then aim it at the dummy's Flame Imp.";
+          return "Attacks can hit the fighter or one of their monsters.\n\nClick Fire Lance and aim it at the dummy's Flame Imp.";
         },
         allow: { kind: "card", cardId: "fire_lance", target: "monster" },
         done: (s) => stagedCount(s, "fire_lance") >= 1,
@@ -286,7 +284,7 @@ const SCRIPT: ScriptedRound[] = [
         text: (s) => {
           if (s.targeting?.kind === "order") return `Aim it at the ${DUMMY_LABEL}.`;
           if (s.monsterMenuUid !== null)
-            return "Choose Fire Breath. It deals fire damage and sets the target Burning.";
+            return "Choose Fire Breath: fire damage that sets the target Burning.";
           return "Now click your Flame Imp to give it an order.";
         },
         allow: { kind: "order", use: "ability", target: "fighter" },
@@ -301,7 +299,7 @@ const SCRIPT: ScriptedRound[] = [
         title: "Guard monsters",
         info: true,
         text: () =>
-          "Good to know: some monsters are guards (blue frame). While one is on the field, attacks have to hit it first.",
+          "Some monsters are guards (blue frame). While one is out, attacks have to hit it first.",
       },
       endTurnStep("end-4", "Press End turn.\n\nYour ultimate is already charged (the glowing badge). Save it for next round."),
     ],
@@ -316,8 +314,8 @@ const SCRIPT: ScriptedRound[] = [
         title: "Statuses",
         info: true,
         text: () =>
-          "The dummy is Burning: it takes damage at the end of every round for a while.\n\n" +
-          "Others: Poison (also damage each round), Wet, Acid, Slow and Blind. Click a status on a strip to see what it does.",
+          "The dummy is Burning: it takes damage at the end of each round for a while.\n\n" +
+          "Others: Poison, Wet, Acid, Slow and Blind. Click a status chip to read what it does.",
         focus: () => LAYOUT.cpuStrip,
       },
       {
@@ -326,10 +324,12 @@ const SCRIPT: ScriptedRound[] = [
         info: true,
         text: (s) => {
           const synergy = s.battle.player.classDef.synergyPool[0];
-          const name = synergy ? synergy.name.replace(/\s*\(.*\)\s*$/, "") : "Your synergy";
-          return `${name}: your class gets stronger the more you play the card type it rewards${
-            synergy?.description ? `.\n\n${synergy.description}` : "."
-          }`;
+          if (!synergy) return "Your class gets stronger the more you play the card type it rewards.";
+          const name = synergy.name.replace(/\s*\(.*\)\s*$/, "");
+          return (
+            `${name} (the chip on your band) gets stronger the more ${synergy.countsCategory} cards you play.\n\n` +
+            "Every class rewards a different kind of card."
+          );
         },
         focus: () => LAYOUT.playerStrip,
       },
@@ -337,8 +337,7 @@ const SCRIPT: ScriptedRound[] = [
         id: "ult",
         title: "Ultimate",
         text: () =>
-          "Your ultimate is charged! The meter around your class badge fills every round.\n\n" +
-          "Click your class badge to add your ultimate to this turn. It doesn't cost AP.",
+          "Your ultimate is charged!\n\nClick your class badge to add it to this turn. It costs no AP.",
         allow: { kind: "ultimate" },
         done: (s) => s.stagedUltimate,
         focus: () => LAYOUT.classBadge,
@@ -595,10 +594,10 @@ export class TutorialBattleScene extends BattleScene {
       heading = "TUTORIAL";
       title = "Watch the replay";
       body =
-        "Both turns play out now. Faster cards go first; when both sides tie, a die roll decides.\n\n" +
-        "The replay speed button is at the top left.";
+        "Both turns play out now. Faster cards go first; ties go to a die roll.\n\n" +
+        "Replay speed is at the top left.";
     } else if (step) {
-      heading = `TUTORIAL · STEP ${this.stepNumber(step)} OF ${TOTAL_STEPS}`;
+      heading = `TUTORIAL · ${this.stepNumber(step)} / ${TOTAL_STEPS}`;
       title = step.title;
       body = step.text(this);
     } else {
@@ -607,43 +606,64 @@ export class TutorialBattleScene extends BattleScene {
       body = `Play cards and press End turn until the ${DUMMY_LABEL} is down.`;
     }
 
+    // Header row: the heading on the left, a small Skip button on the
+    // right, so it never competes with Next for room.
     layer.add(
       this.add
-        .text(x + pad, y + pad + 2, heading, { fontFamily: FONT_DISPLAY, fontSize: "11.5px", fontStyle: "700", color: GOLD_CSS })
+        .text(x + pad, y + pad + 4, heading, { fontFamily: FONT_DISPLAY, fontSize: "11.5px", fontStyle: "700", color: GOLD_CSS })
         .setLetterSpacing(1.4)
     );
-    // Step progress, a thin gold bar under the heading.
+    if (!isBattleOver(this.battle)) {
+      const skip = createButton(this, x + w - pad - 58, y + pad - 2, 58, 24, "Skip", {
+        color: COLORS.restart,
+        hoverColor: COLORS.restartHover,
+        onClick: () => this.onLeave(),
+      });
+      (skip.container.getAt(1) as Phaser.GameObjects.Text).setStyle({ fontSize: "12px" });
+      layer.add(skip.container);
+    }
+    // Step progress, a thin gold bar under the header.
     if (step) {
       const progress = this.add.graphics();
       const barW = w - pad * 2;
       progress.fillStyle(0xffffff, 0.08);
-      progress.fillRoundedRect(x + pad, y + pad + 22, barW, 3, 1.5);
+      progress.fillRoundedRect(x + pad, y + pad + 30, barW, 3, 1.5);
       progress.fillStyle(GOLD, 0.9);
-      progress.fillRoundedRect(x + pad, y + pad + 22, Math.max(3, (barW * this.stepNumber(step)) / TOTAL_STEPS), 3, 1.5);
+      progress.fillRoundedRect(x + pad, y + pad + 30, Math.max(3, (barW * this.stepNumber(step)) / TOTAL_STEPS), 3, 1.5);
       layer.add(progress);
     }
     const titleText = textShadow(
-      this.add.text(x + pad, y + pad + 36, title, {
+      this.add.text(x + pad, y + pad + 42, title, {
         fontFamily: FONT_DISPLAY,
-        fontSize: "21px",
+        fontSize: "20px",
         fontStyle: "700",
         color: "#f7efdc",
         wordWrap: { width: w - pad * 2 },
       })
     );
     layer.add(titleText);
-    const bodyText = this.add.text(x + pad, titleText.y + titleText.height + 12, body, {
+
+    // Next sits at the bottom of the panel; the body gets the room between
+    // the title and it, stepping its font down until it fits.
+    const showNext = Boolean(step?.info && !this.recapPlaying);
+    const nextH = 40;
+    const bodyBottom = y + h - pad - (showNext ? nextH + 12 : 0);
+    const bodyText = this.add.text(x + pad, titleText.y + titleText.height + 10, body, {
       fontFamily: FONT_FAMILY,
       fontSize: "15px",
       fontStyle: "500",
       color: "#eef0f4",
-      lineSpacing: 5,
+      lineSpacing: 4,
       wordWrap: { width: w - pad * 2 },
     });
+    for (const size of [14, 13, 12]) {
+      if (bodyText.y + bodyText.height <= bodyBottom) break;
+      bodyText.setFontSize(size).setLineSpacing(3);
+    }
     layer.add(bodyText);
 
-    if (step?.info && !this.recapPlaying) {
-      const next = createButton(this, x + pad, bodyText.y + bodyText.height + 18, w - pad * 2, 40, "Next →", {
+    if (showNext && step) {
+      const next = createButton(this, x + pad, y + h - pad - nextH, w - pad * 2, nextH, "Next →", {
         color: COLORS.ultimate,
         hoverColor: COLORS.ultimateHover,
         onClick: () => {
@@ -653,15 +673,6 @@ export class TutorialBattleScene extends BattleScene {
       });
       (next.container.getAt(1) as Phaser.GameObjects.Text).setStyle({ fontFamily: FONT_NUM, fontSize: "16px", fontStyle: "700" });
       layer.add(next.container);
-    }
-
-    if (!isBattleOver(this.battle)) {
-      const skip = createButton(this, x + pad, y + h - pad - 36, w - pad * 2, 36, "Skip tutorial", {
-        color: COLORS.restart,
-        hoverColor: COLORS.restartHover,
-        onClick: () => this.onLeave(),
-      });
-      layer.add(skip.container);
     }
 
     // Whatever the step points at gets a soft gold ring that breathes (the
