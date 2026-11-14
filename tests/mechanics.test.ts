@@ -168,7 +168,7 @@ describe("AP and multi-card turns", () => {
     const cpuHp = b.cpu.hp;
     resolveRound(b, play(b.player, "dark_pact", "shadow_bolt"), NOTHING);
     expect(b.player.hp).toBe(hp - 4);
-    expect(cpuHp - b.cpu.hp).toBe(6 - 3); // magic 6 minus pyromancer MR 3
+    expect(cpuHp - b.cpu.hp).toBe(6 - b.cpu.classDef.baseStats.mr); // magic 6 minus the pyromancer's MR
   });
 
   it("can fire the ultimate alongside cards", () => {

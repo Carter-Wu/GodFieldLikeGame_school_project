@@ -23,6 +23,7 @@ npm run preview   # serve that production build locally
 npm run lint      # ESLint
 npm run typecheck # tsc --noEmit (strict)
 npm test          # Vitest (tests/)
+npm run balance   # CPU-vs-CPU matches between every pair of classes; prints each class's win rates
 ```
 
 `legacy/` isn't part of the production build — its scripts are plain global `<script>` tags with

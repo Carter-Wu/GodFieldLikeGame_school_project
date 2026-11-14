@@ -125,7 +125,11 @@ From the team's "Card Design" doc; see `src/model/engine.ts` for the exact rules
 - **General cards** in every deck; **classes**: Guardian, Pyromancer, Black Mage, Master
   Craftsman, Necromancer.
 - **ATK stat**: flat bonus to attack cards. Every class has a base ATK (Guardian 1, Pyromancer 2,
-  Black Mage 2, Master Craftsman 3, Necromancer 1), and weapons and Craftsman's ultimate raise it.
+  Black Mage 2, Master Craftsman 3, Necromancer 3), and weapons and Craftsman's ultimate raise it.
+- **Class balance**: base stats are tuned with `npm run balance` (`scripts/balance-sim.ts`), which
+  plays CPU-vs-CPU matches between every pair of classes on their starter decks. Last pass: every
+  class wins 49-52% overall, and the most lopsided matchup is about 60/40. The CPU is simple, so
+  this measures the stats, not how strong each class is in skilled hands.
 
 Not done yet from that doc:
 
