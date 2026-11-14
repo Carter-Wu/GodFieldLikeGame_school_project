@@ -27,12 +27,13 @@ export interface ClassSelectProps {
   onOpenTutorial: () => void;
 }
 
-// The five stats shown in the inspector, in display order, each with its own
-// icon and colour (shared with the battle HUD, src/statIcons.ts) so the shape
-// of a class reads at a glance.
-const STAT_ROWS: { key: StatKey; label: string; name: string; color: string; icon: string }[] = (
-  ["hp", "def", "mr", "er", "ur"] as const
-).map((key) => ({ key, ...STAT_STYLE[key] }));
+// The stat tiles in the inspector, in the same order as the battle HUD's
+// stat row, each with its own icon and colour (src/statIcons.ts) so the
+// shape of a class reads at a glance. HP sits beside the class name instead,
+// like the HP bar beside a fighter's name in a match.
+type StatRow = { key: StatKey; label: string; name: string; color: string; icon: string };
+const HP_STAT: StatRow = { key: "hp", ...STAT_STYLE.hp };
+const STAT_ROWS: StatRow[] = (["def", "mr", "er", "ur", "atk"] as const).map((key) => ({ key, ...STAT_STYLE[key] }));
 
 // Accent colour per class; unknown classes fall back to gold.
 const CLASS_ACCENT: Record<string, string> = {
@@ -96,12 +97,12 @@ export function ClassSelect({
   // Gauges are relative to the best value any class has, so the bars show
   // how classes compare rather than an arbitrary scale.
   const statMax = Object.fromEntries(
-    STAT_ROWS.map(({ key }) => [key, Math.max(1, ...classes.map((c) => c.baseStats[key]))]),
+    [HP_STAT, ...STAT_ROWS].map(({ key }) => [key, Math.max(1, ...classes.map((c) => c.baseStats[key]))]),
   ) as Record<StatKey, number>;
   const ratio = (classDef: ClassDef, key: StatKey): number => classDef.baseStats[key] / statMax[key];
   // The two stats this class is relatively best at, shown as its "strengths".
   const strengths = selected
-    ? [...STAT_ROWS].sort((a, b) => ratio(selected, b.key) - ratio(selected, a.key)).slice(0, 2)
+    ? [HP_STAT, ...STAT_ROWS].sort((a, b) => ratio(selected, b.key) - ratio(selected, a.key)).slice(0, 2)
     : [];
 
   return (
@@ -177,7 +178,14 @@ export function ClassSelect({
               <Medallion classDef={selected} size="lg" />
               <div className="lobby-hero-text">
                 <div className="lobby-eyebrow">Class</div>
-                <h2 className="lobby-class-title">{selected.name}</h2>
+                <div className="lobby-title-row">
+                  <h2 className="lobby-class-title">{selected.name}</h2>
+                  <span className="lobby-hp" title={HP_STAT.name} style={{ "--stat": HP_STAT.color } as CSSProperties}>
+                    <Icon className="lobby-hp-icon" markup={svg(HP_STAT.icon)} />
+                    <span className="lobby-hp-value">{selected.baseStats.hp}</span>
+                    <span className="lobby-hp-label">{HP_STAT.label}</span>
+                  </span>
+                </div>
                 <div className="lobby-strengths">
                   <span className="lobby-strengths-label">Strengths</span>
                   {strengths.map((st) => (

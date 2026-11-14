@@ -27,6 +27,7 @@ import {
 } from "../src/model/engine.ts";
 import { deserializeBattle, serializeBattle } from "../src/model/serialize.ts";
 import { starterDeckList, validateDeckList } from "../src/model/decks.ts";
+import type { ClassDef } from "../src/model/classes.ts";
 
 beforeAll(() => {
   useLocalCatalog();
@@ -37,9 +38,15 @@ afterEach(() => {
 });
 
 // A battle with empty decks and hands, so each test deals exactly the cards
-// it needs. Both sides get the max AP unless the test says otherwise.
+// it needs. Both sides get the max AP unless the test says otherwise, and no
+// base ATK, so the damage math below is each card's own value (base ATK has
+// its own test).
 function freshBattle(playerClass = "guardian", cpuClass = "pyromancer"): Battle {
-  const battle = createBattle(findClassById(playerClass), findClassById(cpuClass), { playerDeck: [], cpuDeck: [] });
+  const noAtk = (id: string): ClassDef => {
+    const classDef = findClassById(id);
+    return { ...classDef, baseStats: { ...classDef.baseStats, atk: 0 } };
+  };
+  const battle = createBattle(noAtk(playerClass), noAtk(cpuClass), { playerDeck: [], cpuDeck: [] });
   for (const f of [battle.player, battle.cpu]) {
     f.ap = AP_RULES.max;
     f.maxAp = AP_RULES.max;
@@ -100,6 +107,15 @@ describe("new classes", () => {
     expect(counts).toEqual({ normal: allCards().length - 22, rare: 10, legend: 12 });
     expect(cardRarity(findCardById("tinker")!.props)).toBe("legend");
     expect(cardRarity({})).toBe("normal");
+  });
+
+  it("gives every class a base ATK, added to each attack card's damage", () => {
+    for (const classDef of allClasses()) expect(classDef.baseStats.atk).toBeGreaterThan(0);
+    const b = createBattle(findClassById("craftsman"), findClassById("black_mage"), { playerDeck: [], cpuDeck: [] });
+    const atk = findClassById("craftsman").baseStats.atk;
+    const hp = b.cpu.hp;
+    resolveRound(b, play(b.player, "quick_jab"), NOTHING); // 3 physical, minus the Black Mage's DEF 1
+    expect(hp - b.cpu.hp).toBe(3 + atk - 1);
   });
 
   it("puts the general cards in every class's deck", () => {

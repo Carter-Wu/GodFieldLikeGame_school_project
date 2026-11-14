@@ -1881,8 +1881,54 @@ body {
   color: var(--lb-gold);
 }
 
-.lobby-class-title {
+/* Class name with its HP beside it, like a fighter's name and HP bar in a match. */
+.lobby-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   margin: 4px 0 10px;
+}
+
+.lobby-hp {
+  --stat: #ef5b63;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--stat) 45%, transparent);
+  background: color-mix(in srgb, var(--stat) 14%, transparent);
+  line-height: 1;
+}
+
+.lobby-hp-icon {
+  color: var(--stat);
+}
+
+.lobby-hp-icon svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--stat) 55%, transparent));
+}
+
+.lobby-hp-value {
+  font-size: 28px;
+  font-weight: 600;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.lobby-hp-label {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--stat);
+}
+
+.lobby-class-title {
+  margin: 0;
   font-weight: 400;
   font-size: 42px;
   line-height: 1.1;
@@ -2309,12 +2355,14 @@ body {
 .lobby-eyebrow,
 .lobby-strengths-label,
 .lobby-stat-label,
+.lobby-hp-label,
 .lobby-slot-title {
   font-family: var(--lb-display);
   font-style: normal;
 }
 
 .lobby-stat-value,
+.lobby-hp-value,
 .lobby-grade,
 .lobby-btn,
 .lobby-nav-btn,

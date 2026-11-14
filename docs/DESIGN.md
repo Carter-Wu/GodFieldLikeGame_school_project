@@ -33,6 +33,7 @@ Class-based, and modified by synergies.
 - MR (Magic Resist)
 - ER (Element Resistance)
 - UR (Ultimate Regen)
+- ATK (flat bonus to every attack card's damage; every class has a little)
 - Crit? (open question — not decided whether crit is in scope)
 - Passives
   - Class-based
@@ -123,7 +124,8 @@ From the team's "Card Design" doc; see `src/model/engine.ts` for the exact rules
   (0 copies in `class_deck_cards`).
 - **General cards** in every deck; **classes**: Guardian, Pyromancer, Black Mage, Master
   Craftsman, Necromancer.
-- **ATK stat**: flat bonus to attack cards (weapons, Craftsman's ultimate).
+- **ATK stat**: flat bonus to attack cards. Every class has a base ATK (Guardian 1, Pyromancer 2,
+  Black Mage 2, Master Craftsman 3, Necromancer 1), and weapons and Craftsman's ultimate raise it.
 
 Not done yet from that doc:
 

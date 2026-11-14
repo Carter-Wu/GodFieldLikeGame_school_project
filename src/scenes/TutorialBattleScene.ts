@@ -33,8 +33,9 @@ import { COLORS, FONT_DISPLAY, FONT_FAMILY, FONT_NUM, GOLD, GOLD_CSS, UI_COLORS,
 
 const PLAYER_CLASS = "pyromancer";
 const DUMMY_LABEL = "Training Dummy";
-// Soft on purpose: the scripted rounds bring it down by round 5.
-const DUMMY_STATS = { hp: 30, def: 1, mr: 1, er: 1 };
+// Soft on purpose: the scripted rounds bring it down by round 5. No ATK of
+// its own, so Heat Shroud and your ER still stop its Fire Lance completely.
+const DUMMY_STATS = { hp: 40, def: 1, mr: 1, er: 1, atk: 0 };
 
 // Cards that sit in the hand without being part of the lesson.
 const FILLER = ["stoke_the_flame", "scorch", "fireball"];
