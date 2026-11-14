@@ -21,6 +21,8 @@ single-page client.
 - Synergy levels
   - Synergies can include passive effects or active effects (buffs/debuffs).
   - Open question: can a class have multiple active synergies at once?
+  - What's built: one synergy per class, counting a card type, with tiers at 2 and 4 cards — see
+    [SYNERGIES.md](SYNERGIES.md).
 - Each class has access to a unique ultimate.
   - Naming idea: something themed around an "all-in" concept — needs a real name.
 
