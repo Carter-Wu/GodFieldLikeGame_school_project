@@ -144,7 +144,20 @@ one machine can log in to two different accounts and play each other for testing
 ### Accounts and decks
 
 - **Accounts** are Supabase Auth email + password (`src/online/authApi.ts`, `src/components/AuthScreen.tsx`).
-  The username is stored in the user's metadata and is only for display. When Supabase has
+  The username is stored in the user's metadata and is only for display.
+- **Account settings** (click your name on the class-select screen, or the in-battle Account
+  settings button; `src/components/AccountSettings.tsx`) has the profile picture, display name,
+  password, sound volume and log out. Profile pictures are cropped to a 256×256 JPEG in the
+  browser and stored in the public `avatars` bucket at `<user id>/avatar.jpg`
+  (`supabase/migrations/*_avatars.sql`).
+- **Display name changes are limited to 3 per rolling 30 days** (the name picked at sign-up
+  doesn't count). The `change_username` database function enforces it and logs each change in
+  `username_changes`; a trigger on `auth.users` keeps the old name if anything else tries to
+  change it, so the limit can't be skipped by calling Supabase directly
+  (`supabase/migrations/*_username_change_limit.sql`). To change the limit, edit that migration
+  and `USERNAME_CHANGES_PER_WINDOW` / `USERNAME_CHANGE_WINDOW_DAYS` in
+  `src/online/profileApi.ts`.
+- **Email confirmation:** when Supabase has
   **Confirm email** on (the default), a new account has to click the emailed link before logging
   in; turn it off under Authentication → Sign In / Providers → Email for quicker testing.
 - **Decks**: every class has its **starter deck** (`class_deck_cards`), which every player has

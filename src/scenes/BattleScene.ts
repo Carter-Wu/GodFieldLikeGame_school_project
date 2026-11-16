@@ -76,7 +76,8 @@ import {
   useRenderScale,
   type Button,
 } from "./theme.ts";
-import { AP_GEM_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
+import { cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
+import { confirmDialog } from "../ui/dialog.ts";
 import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
 // 1280x720 board layout: mirrored full-width bands at the top and above the
@@ -256,9 +257,8 @@ const SETTINGS = { x: 40, y: 25, r: 15 };
 const SETTINGS_MENU = { x: SETTINGS.x - SETTINGS.r, y: 46, w: 260, tab: SETTINGS.r, pad: 16 };
 const SLIDER_ACCENT = 0xffd23f;
 
-// Round-recap playback speeds the Speed button cycles through (and the
-// settings menu's speed slider steps through); the choice is remembered per
-// browser.
+// Round-recap playback speeds the settings menu's speed slider steps
+// through; the choice is remembered per browser.
 const RECAP_SPEEDS = [1, 1.5, 2, 3];
 const RECAP_SPEED_KEY = "godfield.recapSpeed";
 
@@ -344,6 +344,43 @@ function roundedRectPath(w: number, h: number, r: number, fraction: number): Pha
   return out;
 }
 
+// HP bar palette (drawHpBar): dark iron frame, bronze trim, ruby gems.
+const HP_IRON = 0x17120f;
+const HP_BRONZE = 0x8a6a3a;
+const HP_SOCKET = 0x2a0f15;
+const HP_RUBY = 0xd8243f;
+const HP_RUBY_LIGHT = 0xff6b7d;
+const HP_RUBY_DEEP = 0x7a0f22;
+const EMBER_KEY = "hp-ember";
+
+// A soft 8x8 dot for the HP bar's embers, made once per game.
+function ensureEmberTexture(scene: Phaser.Scene): void {
+  if (scene.textures.exists(EMBER_KEY)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  g.fillStyle(0xffffff, 0.25);
+  g.fillCircle(4, 4, 4);
+  g.fillStyle(0xffffff, 0.55);
+  g.fillCircle(4, 4, 2.6);
+  g.fillStyle(0xffffff, 1);
+  g.fillCircle(4, 4, 1.4);
+  g.generateTexture(EMBER_KEY, 8, 8);
+  g.destroy();
+}
+
+// A diamond (rhombus) of half-size r centred on (cx, cy), in the current fill style.
+function fillDiamond(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number): void {
+  g.fillTriangle(cx, cy - r, cx + r, cy, cx - r, cy);
+  g.fillTriangle(cx, cy + r, cx + r, cy, cx - r, cy);
+}
+
+// A heart about 2*s wide centred on (cx, cy), in the current fill style.
+function drawHeart(g: Phaser.GameObjects.Graphics, cx: number, cy: number, s: number): void {
+  const r = s * 0.55;
+  g.fillCircle(cx - s * 0.5, cy - s * 0.25, r);
+  g.fillCircle(cx + s * 0.5, cy - s * 0.25, r);
+  g.fillTriangle(cx - s * 1.02, cy - s * 0.05, cx + s * 1.02, cy - s * 0.05, cx, cy + s);
+}
+
 function hpColor(pct: number): number {
   if (pct > 0.5) return 0x5aa862;
   if (pct > 0.25) return 0xd9a441;
@@ -380,6 +417,7 @@ export interface BattleSceneData {
   playerClass: ClassDef;
   playerDeck?: Card[] | null; // a custom deck (decks.ts); null/absent = starter deck
   onExit?: (() => void) | null;
+  onAccountSettings?: (() => void) | null; // leave the match and open Account settings; null = no account
 }
 
 // One button on the end-of-game screen.
@@ -405,6 +443,7 @@ export const TURN_SECONDS = 30;
 export class BattleScene extends Phaser.Scene {
   battle!: Battle;
   onExit: (() => void) | null = null;
+  onAccountSettings: (() => void) | null = null;
   recapPlaying = false;
   recapRun: RoundRecapRun | null = null; // active recap (speed/skip control) -- see roundRecap.ts
   shownHp: HpPair | null = null; // { player, cpu } while a recap is counting HP down
@@ -413,7 +452,6 @@ export class BattleScene extends Phaser.Scene {
   resultLayer: Phaser.GameObjects.Container | null = null; // the end-of-game screen, once shown
   statInfo: { key: StatKey; chip: Phaser.GameObjects.Container; layer: Phaser.GameObjects.Container } | null = null; // open stat explainer
   settingsMenu: Phaser.GameObjects.Container | null = null; // the settings dropdown, while open
-  speedButton!: Button; // replay speed; its label follows the settings menu's speed slider
   resultDismissed = false; // closed with "View board"
   resultButtons: Button[] = []; // the end-of-game screen's buttons, in resultActions() order
   resultNote: Phaser.GameObjects.Text | null = null; // a line under them, for subclasses (rematch)
@@ -553,6 +591,12 @@ export class BattleScene extends Phaser.Scene {
     return "CPU";
   }
 
+  // The small tag before the name on each fighter's band.
+  // RandomBattleScene says "OPP" instead of "CPU" for a real opponent.
+  sideTag(key: "player" | "cpu"): string {
+    return key === "cpu" ? "CPU" : "YOU";
+  }
+
   get leaveLabel(): string {
     return "Leave Match";
   }
@@ -624,6 +668,26 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     this.scene.start("ClassSelectScene");
+  }
+
+  // Account settings button: going there ends this match, so ask first.
+  async openAccountSettings(): Promise<void> {
+    const go = this.onAccountSettings;
+    if (!go) return;
+    const sure = await confirmDialog({
+      title: "Going to account settings will leave match",
+      message: "Are you sure?",
+      confirmLabel: "Yes",
+      danger: true,
+    });
+    if (!sure || !this.sys.isActive()) return;
+    this.exitMatch(go);
+  }
+
+  // Leave the match without asking and hand over to `go`. vs-CPU has nothing
+  // to tear down; online scenes override this to leave the room.
+  exitMatch(go: () => void): void {
+    go();
   }
 
   // AP left after the cards picked so far.
@@ -715,6 +779,7 @@ export class BattleScene extends Phaser.Scene {
   create(data: BattleSceneData): void {
     useRenderScale(this);
     this.onExit = data.onExit ?? null;
+    this.onAccountSettings = data.onAccountSettings ?? null;
     this.recapPlaying = false;
     this.clearPlanning();
     this.pendingTurn = null;
@@ -753,7 +818,7 @@ export class BattleScene extends Phaser.Scene {
     addSoftBackground(this, BACKGROUNDS.battle);
     this.addTorchLight();
 
-    // Top bar: unifies the settings gear, replay speed, title and log column.
+    // Top bar: unifies the settings gear, title and log column.
     const topbar = this.add.graphics();
     topbar.fillGradientStyle(0x08090b, 0x08090b, 0x08090b, 0x08090b, 0.97, 0.97, 0.86, 0.86);
     topbar.fillRect(0, 0, GAME_WIDTH, 42);
@@ -798,16 +863,7 @@ export class BattleScene extends Phaser.Scene {
       bg.on("pointerout", () => turn(0));
     }
 
-    // Speed of the end-of-round replay; takes effect immediately, even
-    // mid-replay.
-    this.speedButton = createButton(this, SETTINGS.x + SETTINGS.r + 10, 12, 100, 26, "", {
-      color: COLORS.restart,
-      hoverColor: COLORS.restartHover,
-      onClick: () => {
-        const i = RECAP_SPEEDS.indexOf(this.recapSpeed);
-        this.setReplaySpeed(RECAP_SPEEDS[(i + 1) % RECAP_SPEEDS.length] as number);
-      },
-    });
+    // Speed of the end-of-round replay (set from the settings menu's slider).
     this.setReplaySpeed(this.recapSpeed);
 
     this.cpuPanel = this.add.container(0, 0);
@@ -1358,7 +1414,7 @@ export class BattleScene extends Phaser.Scene {
     container.setPosition(x, y);
     this.drawPanelBackground(container, w, STRIP_H);
 
-    // Header row: name, AP pill, HP bar, GUARD badge (while one's up), Hand N.
+    // Header row: name, HP bar, GUARD badge (while one's up), Hand N.
     const header = this.drawPanelHeader(container, fighter, w, key);
     const hpRight = this.drawGuardFrame(container, fighter, w, header.right);
     const setHp = this.drawHpBar(container, key, fighter, header.left, hpRight);
@@ -1375,7 +1431,7 @@ export class BattleScene extends Phaser.Scene {
     this.panelViews[key] = { x, y, w, h: STRIP_H, container, setHp };
   }
 
-  // Returns the gap left between the AP pill and "Hand N" (for the HP bar).
+  // Returns the gap left between the name and "Hand N" (for the HP bar).
   drawPanelHeader(
     container: Phaser.GameObjects.Container,
     fighter: Fighter,
@@ -1383,7 +1439,7 @@ export class BattleScene extends Phaser.Scene {
     key: "player" | "cpu"
   ): { left: number; right: number } {
     const side = this.add
-      .text(STRIP_PAD, 16, key === "cpu" ? "CPU" : "YOU", {
+      .text(STRIP_PAD, 16, this.sideTag(key), {
         fontFamily: FONT_FAMILY,
         fontSize: "10px",
         fontStyle: "700",
@@ -1403,24 +1459,9 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0, 0.5);
     container.add(name);
 
-    // The opponent's AP as a pill beside the name. Yours has its own panel
-    // with crystals above End turn, by the hand.
-    let headerLeft = STRIP_PAD + side.width + name.width + 20;
-    if (key === "cpu") {
-      const apText = this.add
-        .text(0, 0, `AP ${fmt(fighter.ap)}/${fighter.maxAp ?? fighter.ap}`, { fontFamily: FONT_NUM, fontSize: "13px", fontStyle: "700", color: TEXT.white })
-        .setOrigin(0, 0.5);
-      const pillX = headerLeft;
-      const pillW = apText.width + 18;
-      const pill = this.add.graphics();
-      pill.fillStyle(AP_GEM_COLOR, 1);
-      pill.fillRoundedRect(pillX, 6, pillW, 21, 10.5);
-      pill.lineStyle(1, 0xbfe0ff, 0.7);
-      pill.strokeRoundedRect(pillX + 0.5, 6.5, pillW - 1, 20, 10);
-      apText.setPosition(pillX + 9, 16.5);
-      container.add([pill, apText]);
-      headerLeft = pillX + pillW + 10;
-    }
+    // No AP readout for the opponent: both sides always have the same AP, and
+    // yours is in its own panel above End turn. The HP bar takes the space.
+    const headerLeft = STRIP_PAD + side.width + name.width + 20;
 
     const handCount = fighter.handCount ?? fighter.hand.length;
     const hand = this.add
@@ -1475,9 +1516,15 @@ export class BattleScene extends Phaser.Scene {
     return x - 10;
   }
 
-  // HP bar in the header, from `left` to `right`. Returns setHp(value), which
-  // animates the bar to a new value (with a pale "ghost" of the lost HP that
-  // drains a moment later) -- the round recap calls it as each hit lands.
+  // HP bar in the header, from `left` to `right`: a dark-iron frame with
+  // bronze/gold trim, a diamond emblem holding a beating ruby heart, and the
+  // HP as faceted ruby segments. Idle animation: a light streak runs along the
+  // filled segments, embers drift up off them and the heart beats (faster
+  // and the bar glows at low HP). The animation runs off the scene clock, not
+  // tweens, so a redraw (every click re-renders the panels) doesn't restart
+  // it. Returns setHp(value), which animates the bar to a new value (with a
+  // pale "ghost" of the lost HP that drains a moment later, and a flash) --
+  // the round recap calls it as each hit lands.
   drawHpBar(
     container: Phaser.GameObjects.Container,
     key: "player" | "cpu",
@@ -1485,65 +1532,247 @@ export class BattleScene extends Phaser.Scene {
     left: number,
     right: number
   ): (next: number) => void {
-    const pad = left;
-    const barW = right - left;
-    const y = 6;
-    const h = 21;
-    const track = this.add.graphics();
-    track.fillStyle(UI_COLORS.railInk, 1);
-    track.fillRoundedRect(pad, y, barW, h, h / 2);
-    track.lineStyle(1, GOLD, 0.22);
-    track.strokeRoundedRect(pad + 0.5, y + 0.5, barW - 1, h - 1, h / 2);
+    const y = 5;
+    const h = 23;
+    const cy = y + h / 2;
+    const emblemR = 14; // half-size of the diamond emblem
+    const ex = left + emblemR; // emblem centre
+    const trackX = ex + 4; // the frame starts under the emblem
+    const trackW = Math.max(40, right - trackX);
+    // The gem well runs the whole frame, starting under the emblem, with
+    // rounded ends. HP is measured over the visible part (from the emblem's
+    // right tip); the bit under the emblem is lit whenever HP > 0.
+    const wellX = trackX + 3;
+    const wellY = y + 3;
+    const wellH = h - 6;
+    const wellW = Math.max(20, trackX + trackW - 3 - wellX);
+    const wellR = 4;
+    const visX = ex + emblemR;
+    const visW = Math.max(10, wellX + wellW - visX);
+    const segs = Phaser.Math.Clamp(Math.round(visW / 44), 3, 20); // ~44px gems
+    const segW = visW / segs;
+    // Rounded rect that never asks for corners bigger than it is.
+    const rounded = (
+      g: Phaser.GameObjects.Graphics,
+      rx: number,
+      ry: number,
+      rw: number,
+      rh: number,
+      top = true,
+      bottom = true
+    ): void => {
+      const r = Math.min(wellR, rw / 2, rh / 2);
+      g.fillRoundedRect(rx, ry, rw, rh, { tl: top ? r : 0, tr: top ? r : 0, bl: bottom ? r : 0, br: bottom ? r : 0 });
+    };
+
+    // Frame: iron plate, bronze rim, a gold hairline and three studs.
+    const frame = this.add.graphics();
+    frame.fillStyle(HP_IRON, 1);
+    frame.fillRoundedRect(trackX, y, trackW, h, 6);
+    frame.lineStyle(1.5, HP_BRONZE, 0.95);
+    frame.strokeRoundedRect(trackX + 0.75, y + 0.75, trackW - 1.5, h - 1.5, 6);
+    frame.lineStyle(1, GOLD, 0.3);
+    frame.lineBetween(trackX + 8, y + 2, trackX + trackW - 8, y + 2);
+    // Empty sockets: dim wine-red cells with faint dividers.
+    frame.fillStyle(HP_SOCKET, 1);
+    rounded(frame, wellX, wellY, wellW, wellH);
+    frame.lineStyle(1, 0x000000, 0.55);
+    for (let i = 1; i < segs; i++) frame.lineBetween(visX + segW * i, wellY, visX + segW * i, wellY + wellH);
+    frame.fillStyle(0xffffff, 0.04);
+    rounded(frame, wellX, wellY, wellW, wellH * 0.4, true, false);
+    const stud = (sx: number, sy: number, r: number): void => {
+      frame.fillStyle(HP_BRONZE, 1);
+      fillDiamond(frame, sx, sy, r + 1);
+      frame.fillStyle(GOLD, 1);
+      fillDiamond(frame, sx, sy, r);
+    };
+    stud(trackX + trackW / 2, y, 2.5);
+    stud(trackX + trackW / 2, y + h, 2.5);
+    stud(trackX + trackW - 1, cy, 3);
+
     const ghost = this.add.graphics();
     const fill = this.add.graphics();
-    const hpLabel = this.add
-      .text(pad + 10, y + h / 2, "HP", {
-        fontFamily: FONT_NUM,
-        fontSize: "12px",
-        fontStyle: "700",
-        color: "#ffffff",
-        stroke: "#000000",
-        strokeThickness: 2,
-      })
-      .setLetterSpacing(1.1)
-      .setOrigin(0, 0.5);
+    const streak = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
+    const flash = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD).setAlpha(0);
+
     const value = this.add
-      .text(pad + barW / 2, y + h / 2, "", {
-        fontFamily: FONT_NUM,
+      .text(visX + visW / 2, cy + 0.5, "", {
+        fontFamily: FONT_DISPLAY,
         fontSize: "15px",
         fontStyle: "700",
-        color: TEXT.white,
-        stroke: "#000000",
-        strokeThickness: 3,
+        color: "#fff1e6",
+        stroke: "#2a0508",
+        strokeThickness: 4,
       })
       .setOrigin(0.5);
-    container.add([track, ghost, fill, hpLabel, value]);
 
-    const bar = (g: Phaser.GameObjects.Graphics, hp: number, color: number, alpha: number): void => {
+    // Embers rising off the filled part of the bar.
+    ensureEmberTexture(this);
+    let fillW = 0;
+    const embers = this.add.particles(0, 0, EMBER_KEY, {
+      emitZone: {
+        type: "random",
+        source: {
+          getRandomPoint: (p: Phaser.Types.Math.Vector2Like) => {
+            p.x = visX + Math.random() * Math.max(0, wellX + fillW - visX);
+            p.y = wellY + 2 + Math.random() * (wellH - 4);
+          },
+        },
+      },
+      lifespan: { min: 700, max: 1400 },
+      speedY: { min: -30, max: -10 },
+      speedX: { min: -8, max: 8 },
+      scale: { start: 0.9, end: 0 },
+      alpha: { start: 0.85, end: 0 },
+      tint: [0xffb070, 0xff6a3a, 0xffd7a0, 0xff4058],
+      blendMode: Phaser.BlendModes.ADD,
+      frequency: Math.max(60, 9000 / wellW),
+      quantity: 1,
+    });
+
+    // Emblem: glow, iron diamond with a gold rim, beating ruby heart, "HP".
+    const emblem = this.add.container(ex, cy);
+    const glow = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
+    glow.fillStyle(HP_RUBY, 0.18);
+    glow.fillCircle(0, 0, emblemR + 6);
+    glow.fillStyle(HP_RUBY, 0.22);
+    glow.fillCircle(0, 0, emblemR + 1);
+    const diamond = this.add.graphics();
+    diamond.fillStyle(HP_BRONZE, 1);
+    fillDiamond(diamond, 0, 0, emblemR + 1);
+    diamond.fillStyle(HP_IRON, 1);
+    fillDiamond(diamond, 0, 0, emblemR - 1);
+    diamond.lineStyle(1, GOLD, 0.85);
+    const ri = emblemR - 2.5;
+    diamond.lineBetween(0, -ri, ri, 0);
+    diamond.lineBetween(ri, 0, 0, ri);
+    diamond.lineBetween(0, ri, -ri, 0);
+    diamond.lineBetween(-ri, 0, 0, -ri);
+    const heart = this.add.graphics();
+    heart.fillStyle(0x6a0a1c, 1);
+    drawHeart(heart, 0, 0.5, 9.5);
+    heart.fillStyle(HP_RUBY, 1);
+    drawHeart(heart, 0, 0, 8.5);
+    heart.fillStyle(0xffffff, 0.35);
+    heart.fillEllipse(-3.4, -3.2, 3.2, 2.2);
+    const hpText = this.add
+      .text(0, 0.5, "HP", {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "8px",
+        fontStyle: "700",
+        color: "#fff1e6",
+        stroke: "#3a0610",
+        strokeThickness: 2,
+      })
+      .setOrigin(0.5);
+    emblem.add([glow, diamond, heart, hpText]);
+
+    container.add([frame, ghost, fill, streak, embers, flash, value, emblem]);
+
+    // Ruby segments up to `hp`: lit cells with a top highlight, a darker
+    // base and bevelled dividers; the last cell can be partly filled.
+    const paint = (g: Phaser.GameObjects.Graphics, w: number, ghostly: boolean): void => {
       g.clear();
-      const bw = barW * Phaser.Math.Clamp(hp / fighter.maxHp, 0, 1);
-      if (bw <= 0) return;
-      g.fillStyle(color, alpha);
-      g.fillRoundedRect(pad, y, bw, h, Math.min(h / 2, bw / 2));
+      if (w <= 0) return;
+      if (ghostly) {
+        g.fillStyle(0xffd6dc, 0.45);
+        rounded(g, wellX, wellY, w, wellH);
+        return;
+      }
+      g.fillStyle(HP_RUBY_DEEP, 1);
+      rounded(g, wellX, wellY, w, wellH);
+      g.fillStyle(HP_RUBY, 1);
+      rounded(g, wellX, wellY + 0.5, w, wellH - 4.5);
+      g.fillStyle(HP_RUBY_LIGHT, 0.75);
+      rounded(g, wellX, wellY + 0.5, w, wellH * 0.34, true, false);
+      g.fillStyle(0xffffff, 0.3);
+      g.fillRect(wellX + Math.min(wellR, w / 2), wellY + 2, Math.max(0, w - Math.min(wellR, w / 2) * 2), 1);
+      for (let i = 1; i < segs; i++) {
+        const sx = visX + segW * i;
+        if (sx >= wellX + w - 1) break;
+        g.fillStyle(0x3a0610, 0.75);
+        g.fillRect(sx - 1, wellY, 1, wellH);
+        g.fillStyle(0xffffff, 0.22);
+        g.fillRect(sx, wellY, 1, wellH);
+      }
     };
+    const widthFor = (hp: number): number =>
+      hp <= 0 ? 0 : visX - wellX + visW * Phaser.Math.Clamp(hp / fighter.maxHp, 0, 1);
     const draw = (hp: number, ghostHp: number): void => {
-      bar(ghost, ghostHp, 0xffffff, 0.35);
-      bar(fill, hp, hpColor(hp / fighter.maxHp), 1);
+      fillW = widthFor(hp);
+      paint(ghost, widthFor(ghostHp), true);
+      paint(fill, fillW, false);
       value.setText(`${Math.ceil(hp)} / ${fighter.maxHp}`);
+      embers.emitting = wellX + fillW - visX > 2;
     };
 
     let shown = this.shownHp?.[key] ?? fighter.hp;
     draw(shown, shown);
 
+    // Idle animation, driven by the scene clock.
+    const onUpdate = (time: number): void => {
+      const low = shown / fighter.maxHp <= 0.25 && shown > 0;
+      // Light streak: sweeps the filled part once every 10 s (each sweep takes 1.6 s).
+      streak.clear();
+      const phase = (time % 10000) / 1600;
+      if (fillW > 4 && phase < 1) {
+        const band = 70;
+        const runW = wellX + fillW - visX; // the visible lit part
+        const cx = visX - band + phase * (runW + band * 2);
+        const slices = 14;
+        for (let i = 0; i < slices; i++) {
+          const t = i / (slices - 1);
+          const sx0 = cx - band / 2 + band * (i / slices);
+          const sx1 = sx0 + band / slices;
+          const x0 = Math.max(sx0, wellX + wellR);
+          const x1 = Math.min(sx1, wellX + fillW - wellR);
+          if (x1 <= x0) continue;
+          const alpha = 0.5 * Math.exp(-(((t - 0.5) / 0.22) ** 2));
+          streak.fillStyle(0xffe0e6, alpha);
+          streak.fillRect(x0, wellY + 1, x1 - x0, wellH - 2);
+        }
+      }
+      // Heartbeat: a double thump each beat, 60 bpm at full HP rising
+      // steadily to 110 bpm at 10% HP, and staying at 110 below that.
+      const pct = Phaser.Math.Clamp(shown / fighter.maxHp, 0, 1);
+      const bpm = Phaser.Math.Linear(110, 60, Phaser.Math.Clamp((pct - 0.1) / 0.9, 0, 1));
+      const period = 60000 / bpm;
+      const p = (time % period) / period;
+      const pulse = Math.exp(-(((p - 0.08) / 0.05) ** 2)) + 0.6 * Math.exp(-(((p - 0.28) / 0.05) ** 2));
+      heart.setScale(1 + 0.14 * pulse);
+      glow.setAlpha(0.45 + 0.55 * pulse);
+      // Low HP: the gems throb.
+      fill.setAlpha(low ? 0.78 + 0.22 * Math.sin(time / 120) : 1);
+    };
+    this.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
+    frame.once(Phaser.GameObjects.Events.DESTROY, () => {
+      this.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+      this.tweens.killTweensOf([flash, emblem]);
+    });
+
     return (next: number): void => {
       if (this.shownHp) this.shownHp[key] = next;
       const state = { hp: shown, ghost: shown };
+      const healed = next > shown;
+      const flashW = widthFor(Math.max(next, shown)); // the gems that changed and those left
       shown = next;
       const update = (): void => {
         if (fill.active) draw(state.hp, state.ghost);
       };
       this.tweens.add({ targets: state, hp: next, duration: 350, ease: "Cubic.easeOut", onUpdate: update });
       this.tweens.add({ targets: state, ghost: next, delay: 400, duration: 450, onUpdate: update });
+      if (!flash.active) return;
+      // A hit flashes the bar and jolts the emblem; a heal glows gold.
+      this.tweens.killTweensOf([flash, emblem]);
+      flash.clear();
+      flash.fillStyle(healed ? 0xffd27a : 0xffffff, 1);
+      rounded(flash, wellX, wellY, flashW, wellH);
+      flash.setAlpha(healed ? 0.45 : 0.6);
+      this.tweens.add({ targets: flash, alpha: 0, duration: healed ? 600 : 300, ease: "Quad.easeOut" });
+      if (!healed) {
+        emblem.setX(ex);
+        this.tweens.add({ targets: emblem, x: ex + 2.5, duration: 45, yoyo: true, repeat: 2, onComplete: () => emblem.setX(ex) });
+      }
     };
   }
 
@@ -1686,12 +1915,11 @@ export class BattleScene extends Phaser.Scene {
     this.recapSpeed = speed;
     saveRecapSpeed(speed);
     setRecapSpeed(this, speed);
-    (this.speedButton.container.getAt(1) as Phaser.GameObjects.Text).setText(`Speed ${speed}x`);
   }
 
   // The settings dropdown: a tab hugging the gear that widens into a panel
   // below it, with a volume slider, a stepped replay speed slider and, at the
-  // bottom, an account settings button (placeholder for now) and Leave
+  // bottom, an account settings button and Leave
   // Match. Esc opens it too; a click anywhere outside it (or on the gear, or
   // Esc again) closes it.
   openSettings(): void {
@@ -1753,15 +1981,20 @@ export class BattleScene extends Phaser.Scene {
       );
     });
 
-    // Account settings, at the bottom: not designed yet, so the button just
-    // says so.
+    // Account settings, at the bottom: asks first, since it leaves the match.
+    // Without an account (online features off) there's nothing to show.
     const account = createButton(this, pad, 146, w - pad * 2, 32, "Account settings", {
       color: COLORS.restart,
       hoverColor: COLORS.restartHover,
       onClick: () => {
-        const text = account.container.getAt(1) as Phaser.GameObjects.Text;
-        text.setText("Coming soon");
-        this.time.delayedCall(1200, () => text.active && text.setText("Account settings"));
+        if (!this.onAccountSettings) {
+          const text = account.container.getAt(1) as Phaser.GameObjects.Text;
+          text.setText("Not logged in");
+          this.time.delayedCall(1200, () => text.active && text.setText("Account settings"));
+          return;
+        }
+        this.closeSettings();
+        void this.openAccountSettings();
       },
     });
     body.add(account.container);

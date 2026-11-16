@@ -596,7 +596,7 @@ export class TutorialBattleScene extends BattleScene {
       title = "Watch the replay";
       body =
         "Both turns play out now. Faster cards go first; when both sides tie, a die roll decides.\n\n" +
-        "The replay speed button is at the top left.";
+        "Change the replay speed in the settings menu (the gear at the top left).";
     } else if (step) {
       heading = `TUTORIAL · STEP ${this.stepNumber(step)} OF ${TOTAL_STEPS}`;
       title = step.title;

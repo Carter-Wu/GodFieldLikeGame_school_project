@@ -12,7 +12,7 @@
 // ultimate in strike order, then monsters, then statuses.
 //
 // It plays at the viewer's chosen speed (setRecapSpeed, the battle screen's
-// speed button); clicking anywhere during the recap fast-forwards it.
+// settings-menu slider); clicking anywhere during the recap fast-forwards it.
 
 import Phaser from "phaser";
 import { CARD_ICON_KEY } from "../phaserIcons.ts";

@@ -69,27 +69,43 @@ interface CardTileProps {
   dim?: boolean;
   selected?: boolean;
   draggable?: boolean;
+  action?: "add" | "remove"; // what a click does (besides selecting); shown on hover
   onSelect: () => void;
-  onPrimary?: () => void; // double-click
+  onAction?: () => void; // click, after selecting
   onSecondary?: () => void; // right-click
   onDragStart?: (e: DragEvent) => void;
 }
 
 /** One card as a small portrait tile: art, AP cost, name. */
-function CardTile({ card, badge, dim, selected, draggable, onSelect, onPrimary, onSecondary, onDragStart }: CardTileProps): ReactElement {
+function CardTile({
+  card,
+  badge,
+  dim,
+  selected,
+  draggable,
+  action,
+  onSelect,
+  onAction,
+  onSecondary,
+  onDragStart,
+}: CardTileProps): ReactElement {
   // Rare and legend tiles: a border just inside the tile and a gem before
   // the name, like the full card faces (FramedCard, cardFace.ts).
   const rarity = cardRarity(card.props);
   const marked = rarity !== RARITY.NORMAL;
+  const label = marked ? `${card.name} (${RARITY_LABEL[rarity]})` : card.name;
+  const hint = action === "add" ? " · click to add" : action === "remove" ? " · click to remove" : "";
   return (
     <button
       type="button"
-      className={`card-tile ${card.category} rarity-${rarity}${dim ? " dim" : ""}${selected ? " selected" : ""}`}
-      title={marked ? `${card.name} (${RARITY_LABEL[rarity]})` : card.name}
+      className={`card-tile ${card.category} rarity-${rarity}${dim ? " dim" : ""}${selected ? " selected" : ""}${action ? ` can-${action}` : ""}`}
+      title={label + hint}
       draggable={draggable}
       onDragStart={onDragStart}
-      onClick={onSelect}
-      onDoubleClick={onPrimary}
+      onClick={() => {
+        onSelect();
+        onAction?.();
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         onSelect();
@@ -104,6 +120,11 @@ function CardTile({ card, badge, dim, selected, draggable, onSelect, onPrimary, 
       {marked ? <span className="card-tile-rarity" aria-hidden="true" /> : null}
       <span className="card-tile-cost">{cardCost(card.props)}</span>
       {badge ? <span className="card-tile-badge">{badge}</span> : null}
+      {action ? (
+        <span className="card-tile-action" aria-hidden="true">
+          {action === "add" ? "+" : "−"}
+        </span>
+      ) : null}
       <span className="card-tile-name">
         {marked ? <span className="card-tile-gem" aria-label={RARITY_LABEL[rarity]} /> : null}
         {card.name}
@@ -397,7 +418,9 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
             <p className="shell-note deck-hint">
               Every player has this deck and it can&apos;t be edited. Use &quot;Copy to a new deck&quot; to start your own from it.
             </p>
-          ) : null}
+          ) : (
+            <p className="shell-note deck-hint">Click a card in your deck to remove it, or a card on the right to add it.</p>
+          )}
 
           <div className={`deck-grid${dropTarget === "deck" ? " drop" : ""}`} {...dropZone("deck")}>
             {deckTiles.map(({ card, key }) => (
@@ -406,13 +429,14 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
                 card={card}
                 selected={card.id === selectedId}
                 draggable={!readOnly}
+                action={readOnly ? undefined : "remove"}
                 onDragStart={dragFrom("deck", card.id)}
                 onSelect={() => setSelectedId(card.id)}
-                onPrimary={() => removeOne(card.id)}
+                onAction={() => removeOne(card.id)}
                 onSecondary={() => removeOne(card.id)}
               />
             ))}
-            {deckTiles.length === 0 ? <p className="shell-note deck-grid-empty">Drag cards here from the right.</p> : null}
+            {deckTiles.length === 0 ? <p className="shell-note deck-grid-empty">Click or drag cards on the right to add them.</p> : null}
           </div>
 
           {problem && !readOnly ? <p className="auth-error">{problem}</p> : null}
@@ -473,9 +497,10 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
                   dim={!canAdd(card)}
                   selected={card.id === selectedId}
                   draggable={!readOnly && canAdd(card)}
+                  action={!readOnly && canAdd(card) ? "add" : undefined}
                   onDragStart={dragFrom("pool", card.id)}
                   onSelect={() => setSelectedId(card.id)}
-                  onPrimary={() => addOne(card.id)}
+                  onAction={() => addOne(card.id)}
                   onSecondary={() => removeOne(card.id)}
                 />
               );
@@ -483,7 +508,7 @@ export function DeckBuilder({ classDef, decks, initialDeckId, onDecksChanged, co
             {shownPool.length === 0 ? <p className="shell-note">No cards match.</p> : null}
           </div>
           <p className="shell-note deck-controls-hint">
-            {readOnly ? "Click a card to read it." : "Double-click or drag to add · right-click to remove"}
+            {readOnly ? "Click a card to read it." : "Click or drag to add · right-click to remove"}
           </p>
         </section>
       </div>

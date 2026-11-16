@@ -7,6 +7,7 @@ import { STAT_STYLE } from "../statIcons.ts";
 import { onlineAvailable } from "../online/supabaseClient.ts";
 import type { Account } from "../online/authApi.ts";
 import type { SavedDeck } from "../online/decksApi.ts";
+import { PlayerAvatar } from "./PlayerAvatar.tsx";
 
 export interface ClassSelectProps {
   classes: ClassDef[];
@@ -18,6 +19,7 @@ export interface ClassSelectProps {
   onSelectDeck: (classId: string, deckId: string | null) => void;
   onEditDecks: (classId: string) => void;
   onLogout: () => void;
+  onOpenAccount: () => void;
   onPlayCpu: (classId: string) => void;
   onCreateOnline: (classId: string) => void;
   onJoinOnline: (classId: string) => void;
@@ -80,6 +82,7 @@ export function ClassSelect({
   onSelectDeck,
   onEditDecks,
   onLogout,
+  onOpenAccount,
   onPlayCpu,
   onCreateOnline,
   onJoinOnline,
@@ -125,9 +128,15 @@ export function ClassSelect({
           </button>
           {account ? (
             <div className="lobby-account">
-              <span className="lobby-account-name" title={account.email}>
-                {account.username}
-              </span>
+              <button
+                type="button"
+                className="lobby-account-btn"
+                onClick={onOpenAccount}
+                title={`${account.email} · Account settings`}
+              >
+                <PlayerAvatar url={account.avatarUrl} className="sm" />
+                <span className="lobby-account-name">{account.username}</span>
+              </button>
               <button type="button" className="lobby-logout" onClick={onLogout}>
                 Log out
               </button>
