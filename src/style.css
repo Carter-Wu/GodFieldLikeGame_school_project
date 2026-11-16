@@ -1258,6 +1258,51 @@ body {
   border-color: #6c6f76;
 }
 
+/* What a click does on an editable tile: a "+" (pool) or "−" (deck) disc
+   in the middle of the art, shown on hover/focus. */
+.card-tile-action {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+  transform: translate(-50%, -50%) scale(0.8);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.card-tile.can-add .card-tile-action {
+  background: rgba(58, 143, 90, 0.88);
+}
+
+.card-tile.can-remove .card-tile-action {
+  background: rgba(181, 66, 58, 0.88);
+}
+
+.card-tile:hover .card-tile-action,
+.card-tile:focus-visible .card-tile-action {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.card-tile.can-remove:hover {
+  border-color: #b5423a;
+}
+
+.card-tile.can-add:hover {
+  border-color: #3a8f5a;
+}
+
 /* White, so a selected tile never reads as a legend tile's gold border. */
 .card-tile.selected {
   border-color: #ffffff;
