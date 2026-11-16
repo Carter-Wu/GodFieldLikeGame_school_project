@@ -13,6 +13,7 @@ import { confirmDialog } from "../ui/dialog.ts";
 export interface RandomBattleData {
   match: RandomMatch;
   onExit?: (() => void) | null;
+  onAccountSettings?: (() => void) | null;
 }
 
 function toBattleView(view: RandomMatchView): BattleView {
@@ -85,7 +86,7 @@ export class RandomBattleScene extends BattleScene {
       }),
       match.onConnectionChange(() => this.render()),
       // Both pressed Rematch: start this screen over with the new battle.
-      match.onNewGame(() => this.scene.restart({ match, onExit: this.onExit })),
+      match.onNewGame(() => this.scene.restart({ match, onExit: this.onExit, onAccountSettings: this.onAccountSettings })),
       match.onRematchEnded((reason) => {
         const now = Date.now();
         if (reason === "opponentLeft") this.exitAt = now + 5000;
@@ -104,6 +105,11 @@ export class RandomBattleScene extends BattleScene {
 
   override get opponentLabel(): string {
     return "Opponent";
+  }
+
+  // The opponent is a real player here, not the CPU.
+  override sideTag(key: "player" | "cpu"): string {
+    return key === "cpu" ? "OPP" : "YOU";
   }
 
   // Online, fighters are shown by player name (set by the server as the
@@ -213,13 +219,21 @@ export class RandomBattleScene extends BattleScene {
       });
       if (!leave || !this.sys.isActive()) return;
     }
-    this.leaving = true;
-    this.match.leave();
     if (this.onExit) {
-      this.onExit();
+      this.exitMatch(this.onExit);
       return;
     }
+    this.leaving = true;
+    this.match.leave();
     this.scene.start("ClassSelectScene");
+  }
+
+  // Leaving mid-match counts as a loss, same as Leave.
+  override exitMatch(go: () => void): void {
+    if (this.leaving) return;
+    this.leaving = true;
+    this.match.leave();
+    go();
   }
 
   override statusMessage(): string {

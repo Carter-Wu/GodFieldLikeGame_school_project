@@ -6,6 +6,7 @@ import { ClassSelect } from "../components/ClassSelect.tsx";
 import { DeckBuilder } from "../components/DeckBuilder.tsx";
 import { Gallery } from "../components/Gallery.tsx";
 import { MatchHistory } from "../components/MatchHistory.tsx";
+import { AccountSettings } from "../components/AccountSettings.tsx";
 import { PhaserTutorial } from "../components/PhaserTutorial.tsx";
 import { Lobby } from "../components/Lobby.tsx";
 import { Dialog, type DialogProps } from "../components/Dialog.tsx";
@@ -33,6 +34,7 @@ type Screen =
   | { name: "menu" }
   | { name: "gallery" }
   | { name: "record" }
+  | { name: "account" }
   | { name: "tutorial" }
   | { name: "decks"; classId: string }
   | { name: "battle"; playerClassId: string; deck: DeckChoice }
@@ -181,6 +183,9 @@ export function App(): ReactElement {
   };
 
   const toMenu = (): void => setScreen({ name: "menu" });
+  const logOutNow = (): void => {
+    logOut().catch((err: Error) => showError("Couldn't log out", err.message));
+  };
 
   // Back to the menu from an online battle: the game may have just been
   // recorded, so refresh the record. (vs-CPU games aren't recorded.)
@@ -197,13 +202,23 @@ export function App(): ReactElement {
     setTimeout(() => void reloadHistory(), 2000);
   };
 
+  // The in-battle Account settings button (after "Are you sure?"): the scene
+  // has already left the match. Only offered with an account.
+  const toAccount = auth.account ? (): void => setScreen({ name: "account" }) : null;
+  const toAccountAfterRandomGame = toAccount
+    ? (): void => {
+        toAccount();
+        setTimeout(() => void reloadHistory(), 2000); // a forfeit is recorded just after leaving
+      }
+    : null;
+
   let body: ReactElement;
   switch (screen.name) {
     case "gallery":
       body = <Gallery onBack={toMenu} />;
       break;
     case "tutorial":
-      body = <PhaserTutorial onExit={toMenu} />;
+      body = <PhaserTutorial onExit={toMenu} onAccountSettings={toAccount} />;
       break;
     case "record":
       body = (
@@ -213,6 +228,13 @@ export function App(): ReactElement {
           error={historyError}
           onBack={toMenu}
         />
+      );
+      break;
+    case "account":
+      body = auth.account ? (
+        <AccountSettings account={auth.account} history={history} onBack={toMenu} onLogout={logOutNow} />
+      ) : (
+        <></>
       );
       break;
     case "decks": {
@@ -233,7 +255,14 @@ export function App(): ReactElement {
       break;
     }
     case "battle":
-      body = <PhaserBattle playerClassId={screen.playerClassId} playerDeckList={screen.deck.list} onExit={toMenu} />;
+      body = (
+        <PhaserBattle
+          playerClassId={screen.playerClassId}
+          playerDeckList={screen.deck.list}
+          onExit={toMenu}
+          onAccountSettings={toAccount}
+        />
+      );
       break;
     case "lobby-create":
       body = (
@@ -272,7 +301,13 @@ export function App(): ReactElement {
       );
       break;
     case "random-battle":
-      body = <PhaserRandomBattle match={screen.match} onExit={toMenuAfterRandomGame} />;
+      body = (
+        <PhaserRandomBattle
+          match={screen.match}
+          onExit={toMenuAfterRandomGame}
+          onAccountSettings={toAccountAfterRandomGame}
+        />
+      );
       break;
     case "menu":
     default:
@@ -289,9 +324,8 @@ export function App(): ReactElement {
             setLastClassId(classId);
             setScreen({ name: "decks", classId });
           }}
-          onLogout={() => {
-            logOut().catch((err: Error) => showError("Couldn't log out", err.message));
-          }}
+          onLogout={logOutNow}
+          onOpenAccount={() => setScreen({ name: "account" })}
           onPlayCpu={(classId) =>
             startWith(classId, (playerClass, deck) => setScreen({ name: "battle", playerClassId: playerClass.id, deck }))
           }
