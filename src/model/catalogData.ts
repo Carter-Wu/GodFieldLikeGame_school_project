@@ -85,11 +85,14 @@ const synergies: CatalogRows["synergies"] = [
   },
 ];
 
+// Base stats were balanced with `npm run balance` (scripts/balance-sim.ts):
+// CPU-vs-CPU matches between every pair of classes, tuned until each class
+// wins about half its games. Rerun it after changing stats, cards or decks.
 const classes: CatalogRows["classes"] = [
   {
     id: "guardian",
     name: "Guardian (example)",
-    base_stats: { hp: 44, def: 6, mr: 2, er: 2, ur: 6, crit: 0 },
+    base_stats: { hp: 44, def: 6, mr: 2, er: 2, ur: 6, crit: 0, atk: 1 },
     ultimate: {
       id: "guardian_ultimate",
       name: "TBD",
@@ -103,7 +106,7 @@ const classes: CatalogRows["classes"] = [
   {
     id: "pyromancer",
     name: "Pyromancer (example)",
-    base_stats: { hp: 34, def: 2, mr: 3, er: 4, ur: 8, crit: 0 },
+    base_stats: { hp: 38, def: 0, mr: 2, er: 4, ur: 6, crit: 0, atk: 2 },
     ultimate: {
       id: "pyromancer_ultimate",
       name: "TBD",
@@ -117,7 +120,7 @@ const classes: CatalogRows["classes"] = [
   {
     id: "black_mage",
     name: "Black Mage",
-    base_stats: { hp: 32, def: 1, mr: 5, er: 2, ur: 6, crit: 0 },
+    base_stats: { hp: 38, def: 1, mr: 5, er: 2, ur: 6, crit: 0, atk: 2 },
     ultimate: {
       id: "black_mage_ultimate",
       name: "Eclipse",
@@ -133,7 +136,7 @@ const classes: CatalogRows["classes"] = [
   {
     id: "craftsman",
     name: "Master Craftsman",
-    base_stats: { hp: 38, def: 4, mr: 2, er: 2, ur: 5, crit: 0 },
+    base_stats: { hp: 36, def: 4, mr: 2, er: 0, ur: 5, crit: 0, atk: 3 },
     ultimate: {
       id: "craftsman_ultimate",
       name: "Masterpiece",
@@ -149,7 +152,7 @@ const classes: CatalogRows["classes"] = [
   {
     id: "necromancer",
     name: "Necromancer",
-    base_stats: { hp: 36, def: 2, mr: 4, er: 3, ur: 5, crit: 0 },
+    base_stats: { hp: 45, def: 2, mr: 5, er: 3, ur: 7, crit: 0, atk: 3 },
     ultimate: {
       id: "necromancer_ultimate",
       name: "Army of the Dead",

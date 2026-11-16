@@ -21,6 +21,8 @@ single-page client.
 - Synergy levels
   - Synergies can include passive effects or active effects (buffs/debuffs).
   - Open question: can a class have multiple active synergies at once?
+  - What's built: one synergy per class, counting a card type, with tiers at 2 and 4 cards — see
+    [SYNERGIES.md](SYNERGIES.md).
 - Each class has access to a unique ultimate.
   - Naming idea: something themed around an "all-in" concept — needs a real name.
 
@@ -33,6 +35,7 @@ Class-based, and modified by synergies.
 - MR (Magic Resist)
 - ER (Element Resistance)
 - UR (Ultimate Regen)
+- ATK (flat bonus to every attack card's damage; every class has a little)
 - Crit? (open question — not decided whether crit is in scope)
 - Passives
   - Class-based
@@ -123,7 +126,12 @@ From the team's "Card Design" doc; see `src/model/engine.ts` for the exact rules
   (0 copies in `class_deck_cards`).
 - **General cards** in every deck; **classes**: Guardian, Pyromancer, Black Mage, Master
   Craftsman, Necromancer.
-- **ATK stat**: flat bonus to attack cards (weapons, Craftsman's ultimate).
+- **ATK stat**: flat bonus to attack cards. Every class has a base ATK (Guardian 1, Pyromancer 2,
+  Black Mage 2, Master Craftsman 3, Necromancer 3), and weapons and Craftsman's ultimate raise it.
+- **Class balance**: base stats are tuned with `npm run balance` (`scripts/balance-sim.ts`), which
+  plays CPU-vs-CPU matches between every pair of classes on their starter decks. Last pass: every
+  class wins 49-52% overall, and the most lopsided matchup is about 60/40. The CPU is simple, so
+  this measures the stats, not how strong each class is in skilled hands.
 
 Not done yet from that doc:
 
