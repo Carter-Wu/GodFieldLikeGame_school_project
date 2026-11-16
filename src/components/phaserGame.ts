@@ -44,3 +44,12 @@ export function createPhaserGame(
     scene: scenes,
   });
 }
+
+/**
+ * The scene's onAccountSettings, read through a ref so it follows the latest
+ * prop. null when there's no handler at mount (no account), which makes the
+ * scene's Account settings button say "Not logged in".
+ */
+export function accountSettings(ref: { current: (() => void) | null | undefined }): (() => void) | null {
+  return ref.current ? () => ref.current?.() : null;
+}

@@ -3,19 +3,27 @@ import Phaser from "phaser";
 import { BattleScene } from "../scenes/BattleScene.ts";
 import { findClassById } from "../model/catalog.ts";
 import { buildDeckFromList, type DeckListEntry } from "../model/decks.ts";
-import { createPhaserGame } from "./phaserGame.ts";
+import { accountSettings, createPhaserGame } from "./phaserGame.ts";
 
 export interface PhaserBattleProps {
   playerClassId: string;
   playerDeckList: DeckListEntry[] | null; // a validated custom deck; null = starter deck
   onExit: () => void;
+  onAccountSettings?: (() => void) | null; // leave the match for Account settings; null/absent = no account
 }
 
 /** vs-CPU battle stage: the Phaser BattleScene owns all frames; React only mounts it. */
-export function PhaserBattle({ playerClassId, playerDeckList, onExit }: PhaserBattleProps): ReactElement {
+export function PhaserBattle({
+  playerClassId,
+  playerDeckList,
+  onExit,
+  onAccountSettings,
+}: PhaserBattleProps): ReactElement {
   const mountRef = useRef<HTMLDivElement>(null);
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
+  const onAccountRef = useRef(onAccountSettings);
+  onAccountRef.current = onAccountSettings;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -29,6 +37,7 @@ export function PhaserBattle({ playerClassId, playerDeckList, onExit }: PhaserBa
         playerClass,
         playerDeck: playerDeckList ? buildDeckFromList(playerDeckList) : null,
         onExit: () => onExitRef.current(),
+        onAccountSettings: accountSettings(onAccountRef),
       });
     });
     return () => {
