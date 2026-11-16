@@ -14,8 +14,12 @@
 -- Picking the name at sign-up isn't a change and isn't counted.
 -- USERNAME_CHANGES_PER_WINDOW / USERNAME_CHANGE_WINDOW_DAYS in
 -- src/online/profileApi.ts must match the numbers below.
+--
+-- Safe to run more than once (e.g. pasted into the SQL Editor and later
+-- applied again by `supabase db push`): every statement checks or replaces
+-- what's already there, and the change log is kept.
 
-create table public.username_changes (
+create table if not exists public.username_changes (
   id bigint generated always as identity primary key,
   user_id uuid not null references auth.users (id) on delete cascade,
   old_name text,
@@ -23,10 +27,11 @@ create table public.username_changes (
   changed_at timestamptz not null default now()
 );
 
-create index username_changes_user_time on public.username_changes (user_id, changed_at desc);
+create index if not exists username_changes_user_time on public.username_changes (user_id, changed_at desc);
 
 alter table public.username_changes enable row level security;
 
+drop policy if exists "username changes: read own" on public.username_changes;
 create policy "username changes: read own" on public.username_changes
   for select to authenticated
   using ((select auth.uid()) = user_id);
@@ -39,7 +44,7 @@ grant select, insert, update, delete on public.username_changes to service_role;
 -- How many changes the logged-in player has left in the current window, and
 -- when the oldest counted change drops out of it (null if they have changes
 -- left).
-create function public.username_change_status()
+create or replace function public.username_change_status()
   returns table (changes_left int, next_change_at timestamptz)
   language sql
   stable
@@ -59,7 +64,7 @@ as $$
     end;
 $$;
 
-create function public.change_username(new_name text)
+create or replace function public.change_username(new_name text)
   returns table (changes_left int, next_change_at timestamptz)
   language plpgsql
   volatile
@@ -127,7 +132,7 @@ grant execute on function public.username_change_status() to authenticated;
 -- Guard: keep the old username on any update that didn't come through
 -- change_username(). Other metadata (avatar_url, tutorial_seen) still
 -- updates normally.
-create function public.guard_username_change() returns trigger
+create or replace function public.guard_username_change() returns trigger
   language plpgsql
   set search_path = ''
 as $$
@@ -145,5 +150,6 @@ begin
 end;
 $$;
 
+drop trigger if exists guard_username_change on auth.users;
 create trigger guard_username_change before update of raw_user_meta_data on auth.users
   for each row execute function public.guard_username_change();
