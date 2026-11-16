@@ -107,6 +107,11 @@ export class RandomBattleScene extends BattleScene {
     return "Opponent";
   }
 
+  // The opponent is a real player here, not the CPU.
+  override sideTag(key: "player" | "cpu"): string {
+    return key === "cpu" ? "OPP" : "YOU";
+  }
+
   // Online, fighters are shown by player name (set by the server as the
   // fighter's label); the class still shows as the portrait icon.
   override displayName(fighter: Fighter): string {

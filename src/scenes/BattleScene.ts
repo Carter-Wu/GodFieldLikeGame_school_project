@@ -76,7 +76,7 @@ import {
   useRenderScale,
   type Button,
 } from "./theme.ts";
-import { AP_GEM_COLOR, cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
+import { cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
 import { confirmDialog } from "../ui/dialog.ts";
 import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
@@ -554,6 +554,12 @@ export class BattleScene extends Phaser.Scene {
 
   get opponentLabel(): string {
     return "CPU";
+  }
+
+  // The small tag before the name on each fighter's band.
+  // RandomBattleScene says "OPP" instead of "CPU" for a real opponent.
+  sideTag(key: "player" | "cpu"): string {
+    return key === "cpu" ? "CPU" : "YOU";
   }
 
   get leaveLabel(): string {
@@ -1382,7 +1388,7 @@ export class BattleScene extends Phaser.Scene {
     container.setPosition(x, y);
     this.drawPanelBackground(container, w, STRIP_H);
 
-    // Header row: name, AP pill, HP bar, GUARD badge (while one's up), Hand N.
+    // Header row: name, HP bar, GUARD badge (while one's up), Hand N.
     const header = this.drawPanelHeader(container, fighter, w, key);
     const hpRight = this.drawGuardFrame(container, fighter, w, header.right);
     const setHp = this.drawHpBar(container, key, fighter, header.left, hpRight);
@@ -1399,7 +1405,7 @@ export class BattleScene extends Phaser.Scene {
     this.panelViews[key] = { x, y, w, h: STRIP_H, container, setHp };
   }
 
-  // Returns the gap left between the AP pill and "Hand N" (for the HP bar).
+  // Returns the gap left between the name and "Hand N" (for the HP bar).
   drawPanelHeader(
     container: Phaser.GameObjects.Container,
     fighter: Fighter,
@@ -1407,7 +1413,7 @@ export class BattleScene extends Phaser.Scene {
     key: "player" | "cpu"
   ): { left: number; right: number } {
     const side = this.add
-      .text(STRIP_PAD, 16, key === "cpu" ? "CPU" : "YOU", {
+      .text(STRIP_PAD, 16, this.sideTag(key), {
         fontFamily: FONT_FAMILY,
         fontSize: "10px",
         fontStyle: "700",
@@ -1427,24 +1433,9 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0, 0.5);
     container.add(name);
 
-    // The opponent's AP as a pill beside the name. Yours has its own panel
-    // with crystals above End turn, by the hand.
-    let headerLeft = STRIP_PAD + side.width + name.width + 20;
-    if (key === "cpu") {
-      const apText = this.add
-        .text(0, 0, `AP ${fmt(fighter.ap)}/${fighter.maxAp ?? fighter.ap}`, { fontFamily: FONT_NUM, fontSize: "13px", fontStyle: "700", color: TEXT.white })
-        .setOrigin(0, 0.5);
-      const pillX = headerLeft;
-      const pillW = apText.width + 18;
-      const pill = this.add.graphics();
-      pill.fillStyle(AP_GEM_COLOR, 1);
-      pill.fillRoundedRect(pillX, 6, pillW, 21, 10.5);
-      pill.lineStyle(1, 0xbfe0ff, 0.7);
-      pill.strokeRoundedRect(pillX + 0.5, 6.5, pillW - 1, 20, 10);
-      apText.setPosition(pillX + 9, 16.5);
-      container.add([pill, apText]);
-      headerLeft = pillX + pillW + 10;
-    }
+    // No AP readout for the opponent: both sides always have the same AP, and
+    // yours is in its own panel above End turn. The HP bar takes the space.
+    const headerLeft = STRIP_PAD + side.width + name.width + 20;
 
     const handCount = fighter.handCount ?? fighter.hand.length;
     const hand = this.add
