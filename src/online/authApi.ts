@@ -2,7 +2,9 @@
 // (Supabase Auth). The username is kept in the user's metadata and only
 // used for display. The metadata also carries `tutorial_seen`: false on a
 // fresh account until the player picks "Start tutorial" or "Skip" (absent on
-// accounts made before the tutorial existed, which aren't asked).
+// accounts made before the tutorial existed, which aren't asked), and
+// `avatar_url`: the player's profile picture, if they've set one
+// (profileApi.ts).
 
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "./supabaseClient.ts";
@@ -12,6 +14,8 @@ export interface Account {
   email: string;
   username: string;
   needsTutorialPrompt: boolean; // new account that hasn't answered the tutorial prompt yet
+  avatarUrl: string | null; // profile picture; null = the default silhouette
+  createdAt: string | null; // ISO time the account was made
 }
 
 export function toAccount(user: User | null | undefined): Account | null {
@@ -19,7 +23,8 @@ export function toAccount(user: User | null | undefined): Account | null {
   const email = user.email ?? "";
   const username = (user.user_metadata?.["username"] as string | undefined) || email.split("@")[0] || "Player";
   const needsTutorialPrompt = user.user_metadata?.["tutorial_seen"] === false;
-  return { id: user.id, email, username, needsTutorialPrompt };
+  const avatarUrl = (user.user_metadata?.["avatar_url"] as string | undefined) || null;
+  return { id: user.id, email, username, needsTutorialPrompt, avatarUrl, createdAt: user.created_at ?? null };
 }
 
 // Supabase's messages are fine as-is except for a couple of common ones.

@@ -183,6 +183,9 @@ export function App(): ReactElement {
   };
 
   const toMenu = (): void => setScreen({ name: "menu" });
+  const logOutNow = (): void => {
+    logOut().catch((err: Error) => showError("Couldn't log out", err.message));
+  };
 
   // Back to the menu from an online battle: the game may have just been
   // recorded, so refresh the record. (vs-CPU games aren't recorded.)
@@ -228,7 +231,11 @@ export function App(): ReactElement {
       );
       break;
     case "account":
-      body = auth.account ? <AccountSettings account={auth.account} onBack={toMenu} /> : <></>;
+      body = auth.account ? (
+        <AccountSettings account={auth.account} history={history} onBack={toMenu} onLogout={logOutNow} />
+      ) : (
+        <></>
+      );
       break;
     case "decks": {
       const classDef = findClassById(screen.classId);
@@ -317,9 +324,8 @@ export function App(): ReactElement {
             setLastClassId(classId);
             setScreen({ name: "decks", classId });
           }}
-          onLogout={() => {
-            logOut().catch((err: Error) => showError("Couldn't log out", err.message));
-          }}
+          onLogout={logOutNow}
+          onOpenAccount={() => setScreen({ name: "account" })}
           onPlayCpu={(classId) =>
             startWith(classId, (playerClass, deck) => setScreen({ name: "battle", playerClassId: playerClass.id, deck }))
           }

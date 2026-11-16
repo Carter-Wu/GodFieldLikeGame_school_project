@@ -353,61 +353,487 @@ body {
   width: 100%;
 }
 
-/* --- Account settings ---------------------------------------------- */
+/* --- Account settings (AccountSettings) ------------------------------
+   Uses the lobby's look (.lobby variables, top bar, heading, glass panels):
+   a profile card on the left, settings panels on the right. */
 
-.account-profile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 28px;
-  text-align: center;
-}
-
-.account-avatar {
-  display: flex;
+/* Player picture (PlayerAvatar): round, gold-rimmed, silhouette fallback. */
+.player-avatar {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 112px;
-  height: 112px;
+  flex: none;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   overflow: hidden;
-  background: #2a2f42;
-  border: 3px solid #c49b3a;
-  box-shadow: 0 0 18px rgba(196, 155, 58, 0.35);
+  background: radial-gradient(circle at 50% 35%, #2a2f42, #10121a 75%);
+  border: 1.5px solid var(--lb-gold, #e2c588);
 }
 
-.account-avatar svg {
+.player-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.player-avatar svg {
   width: 72%;
   height: 72%;
-  margin-top: 18%;
+  margin-top: 22%;
   fill: #a9abb0;
 }
 
-.account-profile-name {
-  margin-top: 12px;
+.player-avatar.sm {
+  width: 38px;
+  height: 38px;
+}
+
+.player-avatar.xl {
+  width: 168px;
+  height: 168px;
+  border-width: 2px;
+  box-shadow: inset 0 0 0 5px rgba(8, 9, 11, 0.75), 0 0 34px rgba(226, 185, 100, 0.32);
+}
+
+.account-layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.account-card,
+.account-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid var(--lb-line);
+  background: var(--lb-glass);
+  box-shadow: inset 0 0 0 4px rgba(8, 9, 11, 0.35), 0 24px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: lobby-in 0.45s ease both;
+}
+
+/* Profile card */
+.account-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px 24px 26px;
+  border-color: rgba(226, 197, 136, 0.45);
+  text-align: center;
+}
+
+.account-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 200px;
+  background: radial-gradient(ellipse 70% 100% at 50% 0%, rgba(226, 197, 136, 0.2), transparent 70%);
+  pointer-events: none;
+}
+
+.account-card > * {
+  position: relative;
+}
+
+.account-avatar-btn {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+
+.account-avatar-btn:disabled {
+  cursor: progress;
+}
+
+.account-avatar-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 50%;
+  background: rgba(8, 9, 11, 0.62);
+  color: #fff3d6;
+  font-family: var(--lb-num);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.account-avatar-overlay svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+.account-avatar-btn:hover .account-avatar-overlay,
+.account-avatar-btn:focus-visible .account-avatar-overlay,
+.account-avatar-btn.busy .account-avatar-overlay {
+  opacity: 1;
+}
+
+.account-avatar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  color: var(--lb-muted);
+}
+
+.account-link {
+  padding: 2px;
+  border: 0;
+  background: none;
+  color: var(--lb-gold);
+  font-family: var(--lb-num);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.account-link:hover:not(:disabled) {
+  color: #fff6df;
+  text-decoration: underline;
+}
+
+.account-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.account-card .auth-error,
+.account-card .auth-notice {
+  margin: 8px 0 0;
+}
+
+.account-card-name {
+  max-width: 100%;
+  margin-top: 16px;
+  font-family: var(--lb-display);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+
+.account-card-email {
+  margin-top: 4px;
+  font-size: 15px;
+  color: var(--lb-soft);
+  overflow-wrap: anywhere;
+}
+
+.account-card-since {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--lb-muted);
+}
+
+.account-record {
+  width: 100%;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--lb-line);
+}
+
+.account-record-title {
+  margin-bottom: 12px;
+  font-family: var(--lb-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--lb-gold);
+}
+
+.account-record-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.account-stat {
+  --stat: var(--lb-gold);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 4px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--stat) 30%, transparent);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--stat) 12%, transparent), rgba(255, 255, 255, 0.02));
+}
+
+.account-stat.win { --stat: #6fd39a; }
+.account-stat.draw { --stat: #c0c3cc; }
+.account-stat.loss { --stat: #ff8f86; }
+
+.account-stat-value {
+  font-family: var(--lb-num);
   font-size: 24px;
   font-weight: 700;
-  color: #e3c06d;
-  max-width: 100%;
-  overflow-wrap: anywhere;
+  color: var(--stat);
 }
 
-.account-profile-email {
-  margin-top: 2px;
-  font-size: 13px;
-  color: #a9abb0;
-  overflow-wrap: anywhere;
+.account-stat-label {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--lb-muted);
 }
 
-.account-password {
-  margin-top: 24px;
+/* Settings panels */
+.account-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.account-section-title {
-  margin: 0 0 14px;
+.account-panel {
+  padding: 22px 26px 24px;
+}
+
+.account-panel-head {
+  margin-bottom: 16px;
+}
+
+.account-panel-head h2 {
+  margin: 0;
+  font-family: var(--lb-display);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--lb-gold);
+}
+
+.account-panel-head p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--lb-muted);
+}
+
+.account-panel .auth-field {
+  color: var(--lb-soft);
+  font-size: 14px;
+}
+
+.account-panel .auth-field input {
+  height: 46px;
+  border-radius: 10px;
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(8, 9, 11, 0.55);
+}
+
+.account-panel .auth-field input:focus {
+  border-color: var(--lb-gold);
+}
+
+.account-panel .auth-error,
+.account-panel .auth-notice {
+  text-align: left;
+}
+
+.account-inline-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.account-inline-form .auth-field {
+  margin-bottom: 0;
+}
+
+.account-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Display name changes left (e.g. 2 of 3): one pip per change. */
+.account-name-limit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 14px;
+  color: var(--lb-soft);
+}
+
+.account-name-limit.out {
+  color: #ffb3ac;
+}
+
+.account-name-pips {
+  display: inline-flex;
+  flex: none;
+  gap: 5px;
+}
+
+.account-name-pips span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--lb-gold-dim);
+  background: transparent;
+}
+
+.account-name-pips span.left {
+  border-color: var(--lb-gold);
+  background: var(--lb-gold);
+  box-shadow: 0 0 6px rgba(226, 185, 100, 0.5);
+}
+
+.account-panel .auth-field input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.account-field-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.lobby-btn.account-save {
+  height: 46px;
+  min-width: 120px;
+  border-color: var(--lb-gold-dim);
+  color: var(--lb-gold);
+}
+
+.lobby-btn.account-logout {
+  height: 46px;
+  border-color: rgba(255, 143, 134, 0.45);
+  color: #ffb3ac;
+}
+
+.lobby-btn.account-logout:hover:not(:disabled) {
+  border-color: #ff8f86;
+  color: #ffd9d5;
+}
+
+.account-volume {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.account-mute {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--lb-gold);
+  cursor: pointer;
+}
+
+.account-mute:hover {
+  border-color: var(--lb-gold-dim);
+}
+
+.account-mute svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+
+.account-mute svg .stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.account-volume input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  border-radius: 999px;
+  appearance: none;
+  background: linear-gradient(to right, var(--lb-gold) var(--fill, 100%), rgba(255, 255, 255, 0.14) var(--fill, 100%));
+  cursor: pointer;
+}
+
+.account-volume input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #fff3d6;
+  background: #6e5428;
+  box-shadow: 0 0 10px rgba(226, 185, 100, 0.5);
+}
+
+.account-volume input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #fff3d6;
+  background: #6e5428;
+}
+
+.account-volume-value {
+  width: 48px;
+  text-align: right;
+  font-family: var(--lb-num);
   font-size: 16px;
-  text-align: center;
-  color: #ffffff;
+  font-weight: 600;
+  color: var(--lb-soft);
+}
+
+.account-avatar-btn:focus-visible,
+.account-mute:focus-visible,
+.account-link:focus-visible,
+.account-volume input[type="range"]:focus-visible,
+.lobby-account-btn:focus-visible {
+  outline: 2px solid var(--lb-gold);
+  outline-offset: 3px;
+}
+
+@media (max-width: 860px) {
+  .account-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .account-field-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-inline-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .account-panel {
+    padding: 18px 16px 20px;
+  }
+
+  .player-avatar.xl {
+    width: 136px;
+    height: 136px;
+  }
 }
 
 /* --- Match history (class select) ------------------------------------ */
@@ -1724,6 +2150,29 @@ body {
   margin-left: 6px;
   padding-left: 16px;
   border-left: 1px solid var(--lb-line);
+}
+
+/* The username (with picture) opens Account settings. */
+.lobby-account-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 3px 14px 3px 3px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.lobby-account-btn:hover {
+  border-color: var(--lb-gold-dim);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.lobby-account-btn:hover .lobby-account-name {
+  color: #fff6df;
 }
 
 .lobby-account-name {
