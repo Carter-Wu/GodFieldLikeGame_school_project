@@ -222,18 +222,6 @@ body {
   color: #ffffff;
 }
 
-.gallery-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 20px;
-}
-
-.gallery-card {
-  padding: 10px;
-  border-radius: 12px;
-  background: #2e3033;
-}
-
 .gallery-art {
   display: block;
   width: 100%;
@@ -259,19 +247,445 @@ body {
 .gallery-art.fallback.debuff { background: #6a4a94; }
 .gallery-art.fallback.monster { background: #8a6a2a; }
 
-.gallery-desc,
-.gallery-decks {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #a9abb0;
+/* Gallery screen: same look as the lobby / My Record -- Cinzel title,
+   Outfit numbers, Inter body, gold accent, warm neutral glass panels over
+   the arched hall. (.gallery-tabs / .gallery-art above are shared with the
+   auth box and deck builder and are left as they were.) */
+
+.gallery-screen {
+  --gl-gold: #e2c588;
+  --gl-gold-dim: rgba(226, 197, 136, 0.45);
+  --gl-line: rgba(226, 197, 136, 0.18);
+  --gl-glass: linear-gradient(to bottom, rgba(30, 27, 24, 0.5), rgba(14, 13, 12, 0.62));
+  --gl-text: #f4f1ea;
+  --gl-soft: #ddd6c9;
+  --gl-muted: #bfb6a8;
+  --gl-display: "Cinzel", "Cormorant Garamond", Georgia, serif;
+  --gl-num: "Outfit", "Inter", "Helvetica Neue", Arial, sans-serif;
+  --gl-body: "Inter", "Helvetica Neue", Arial, sans-serif;
+  max-width: 1180px;
+  font-family: var(--gl-body);
+  color: var(--gl-text);
+  /* Opacity only: a transform here would make it the containing block of
+     the fixed .gallery-backdrop and clip the hall to the content box. */
+  animation: gallery-fade 0.45s ease both;
 }
 
+@keyframes gallery-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.gallery-screen button {
+  font-family: inherit;
+}
+
+@keyframes gallery-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* The arched hall from the title screen, sharper than the global
+   .ambient-bg, darkened, with warm torch light and a vignette. */
+.gallery-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: #08090b;
+}
+
+.gallery-backdrop::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100vw, 177.78vh);
+  height: max(100vh, 56.25vw);
+  transform: translate(-50%, -50%) scale(1.03);
+  background: url("/backgrounds/battle.svg") center / 100% 100% no-repeat;
+  filter: brightness(0.6) saturate(0.8) blur(3px);
+}
+
+.gallery-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 34% 30% at 50% 36%, rgba(226, 180, 110, 0.1), transparent 70%),
+    radial-gradient(ellipse at 50% 45%, rgba(8, 8, 10, 0.15) 0%, rgba(8, 8, 10, 0.5) 62%, rgba(6, 6, 8, 0.85) 100%);
+}
+
+/* Header */
+.gallery-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 4px 18px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gallery-title {
+  margin: 0;
+  font-family: var(--gl-display);
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  color: #f3e6c4;
+  text-shadow: 0 0 18px rgba(226, 197, 136, 0.35), 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+
+.gallery-subtitle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 0;
+  font-size: 16px;
+  color: var(--gl-muted);
+}
+
+.gallery-count {
+  font-family: var(--gl-num);
+  font-weight: 600;
+  color: var(--gl-gold);
+}
+
+.gallery-sep {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--gl-gold-dim);
+}
+
+/* Glass pill: Back, filters, Prev/Next */
+.gallery-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(30, 27, 24, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--gl-soft);
+  font-family: var(--gl-num) !important;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.gallery-pill:hover:not(:disabled) {
+  border-color: var(--gl-gold-dim);
+  background: rgba(44, 39, 33, 0.6);
+  color: #fff6df;
+}
+
+.gallery-pill:focus-visible,
+.gallery-dot:focus-visible {
+  outline: 1px solid var(--gl-gold);
+  outline-offset: 3px;
+}
+
+.gallery-pill:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.gallery-back {
+  flex: none;
+}
+
+/* Category filters */
+.gallery-filters {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 22px 0 24px;
+}
+
+.gallery-filter {
+  min-width: 112px;
+  padding: 10px 18px;
+  font-size: 16px;
+}
+
+.gallery-filter-count {
+  min-width: 26px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gl-muted);
+}
+
+.gallery-filter.active {
+  border-color: rgba(226, 197, 136, 0.75);
+  background: linear-gradient(to bottom, rgba(226, 197, 136, 0.18), rgba(120, 92, 44, 0.16));
+  color: #fff3d4;
+  box-shadow: 0 0 16px rgba(226, 197, 136, 0.28), inset 0 0 10px rgba(226, 197, 136, 0.12);
+}
+
+.gallery-filter.active .gallery-filter-count {
+  background: rgba(226, 197, 136, 0.22);
+  color: var(--gl-gold);
+}
+
+/* Card slots */
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 22px;
+  animation: gallery-in 0.35s ease both;
+}
+
+.gallery-card {
+  --gl-accent: 226, 197, 136;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 197, 136, 0.16);
+  background: var(--gl-glass);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 16px 40px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+/* Faint light from the top edge, like the My Record cards. */
+.gallery-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(ellipse 80% 40% at 50% 0%, rgba(var(--gl-accent), 0.09), transparent 70%);
+  pointer-events: none;
+}
+
+.gallery-card.attack { --gl-accent: 232, 120, 96; }
+.gallery-card.defend { --gl-accent: 120, 176, 220; }
+.gallery-card.buff { --gl-accent: 126, 204, 150; }
+.gallery-card.debuff { --gl-accent: 176, 140, 224; }
+.gallery-card.monster { --gl-accent: 226, 180, 110; }
+
+.gallery-card > * {
+  position: relative;
+}
+
+.gallery-card .framed-card {
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.55));
+  transition: filter 0.25s ease;
+}
+
+@media (hover: hover) {
+  .gallery-card:hover {
+    transform: translateY(-6px);
+    border-color: rgba(226, 197, 136, 0.65);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 0 0 1px rgba(226, 197, 136, 0.12),
+      0 0 30px rgba(226, 197, 136, 0.3),
+      0 22px 48px rgba(0, 0, 0, 0.5);
+  }
+
+  .gallery-card:hover .framed-card {
+    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.6)) brightness(1.06);
+  }
+}
+
+.gallery-desc {
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--gl-soft);
+}
+
+.gallery-decks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding: 0 2px;
+  font-size: 14px;
+  color: var(--gl-soft);
+}
+
+.gallery-decks.none {
+  color: var(--gl-muted);
+  font-style: normal;
+}
+
+.gallery-deck {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 500;
+}
+
+.gallery-deck-copies {
+  font-family: var(--gl-num);
+  font-weight: 600;
+  color: var(--gl-gold);
+}
+
+/* Pager */
 .gallery-pager {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  margin: 20px 0 8px;
+  gap: 22px;
+  margin: 30px 0 8px;
+}
+
+.gallery-pager .gallery-pill {
+  min-width: 128px;
+}
+
+.gallery-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+}
+
+.gallery-page-label {
+  font-family: var(--gl-num);
+  font-size: 16px;
+  color: var(--gl-muted);
+}
+
+.gallery-page-label strong {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--gl-gold);
+  text-shadow: 0 0 12px rgba(226, 197, 136, 0.35);
+}
+
+.gallery-dots {
+  display: flex;
+  gap: 7px;
+}
+
+.gallery-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.gallery-dot:hover {
+  background: var(--gl-gold-dim);
+}
+
+.gallery-dot.active {
+  background: var(--gl-gold);
+  box-shadow: 0 0 8px rgba(226, 197, 136, 0.6);
+  transform: scale(1.2);
+}
+
+@media (max-width: 1100px) {
+  .gallery-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .gallery-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .gallery-header {
+    align-items: flex-start;
+  }
+
+  .gallery-title {
+    font-size: 30px;
+  }
+
+  .gallery-subtitle {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .gallery-sep {
+    display: none;
+  }
+
+  .gallery-filters {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    margin: 16px -16px 18px;
+    padding: 4px 16px 6px;
+    scrollbar-width: none;
+  }
+
+  .gallery-filter {
+    flex: none;
+    min-width: 0;
+  }
+
+  .gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .gallery-card {
+    padding: 8px 8px 10px;
+    border-radius: 12px;
+  }
+
+  .gallery-pager {
+    gap: 10px;
+  }
+
+  .gallery-pager .gallery-pill {
+    min-width: 0;
+    padding: 10px 16px;
+    font-size: 15px;
+  }
+
+  .gallery-pages {
+    min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-screen,
+  .gallery-grid {
+    animation: none;
+  }
+
+  .gallery-card,
+  .gallery-card:hover {
+    transition: none;
+    transform: none;
+  }
 }
 
 /* --- Accounts (log in / sign up) ------------------------------------ */

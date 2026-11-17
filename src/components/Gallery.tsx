@@ -40,52 +40,74 @@ export function Gallery({ onBack }: GalleryProps): ReactElement {
     setPage(0);
   };
 
+  const countFor = (f: string): number => (f === ALL ? cards.length : cards.filter((c) => c.category === f).length);
+
   return (
-    <div className="shell-screen">
-      <div className="shell-topbar">
-        <span className="shell-title">Card Gallery</span>
-        <button type="button" className="shell-button" onClick={onBack}>
+    <div className="shell-screen gallery-screen">
+      <div className="gallery-backdrop" aria-hidden="true" />
+      <header className="gallery-header">
+        <div className="gallery-heading">
+          <h1 className="gallery-title">Card Gallery</h1>
+          <p className="gallery-subtitle">
+            <span className="gallery-count">{cards.length} cards</span>
+            <span className="gallery-sep" aria-hidden="true" />
+            <span>{source}</span>
+          </p>
+        </div>
+        <button type="button" className="gallery-pill gallery-back" onClick={onBack}>
           ← Back
         </button>
-      </div>
-      <p className="shell-subtitle">
-        {cards.length} cards · {source}
-      </p>
-      <div className="gallery-tabs" role="tablist">
+      </header>
+      <div className="gallery-filters" role="tablist" aria-label="Card category">
         {[ALL, ...CATEGORY_ORDER].map((c) => (
           <button
             key={c}
             type="button"
             role="tab"
             aria-selected={filter === c}
-            className={`gallery-tab${filter === c ? " selected" : ""}`}
+            className={`gallery-pill gallery-filter ${c}${filter === c ? " active" : ""}`}
             onClick={() => pickFilter(c)}
           >
             {c === ALL ? "All" : capitalize(c)}
+            <span className="gallery-filter-count">{countFor(c)}</span>
           </button>
         ))}
       </div>
-      <div className="gallery-grid">
+      <div className="gallery-grid" key={`${filter}-${safePage}`}>
         {visible.map((card) => (
           <GalleryCard key={card.id} card={card} />
         ))}
       </div>
-      <div className="gallery-pager">
-        <button type="button" className="shell-button" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>
+      <nav className="gallery-pager" aria-label="Pages">
+        <button type="button" className="gallery-pill" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>
           ← Prev
         </button>
-        <span className="shell-note">
-          Page {safePage + 1} of {pageCount}
-        </span>
+        <div className="gallery-pages">
+          <span className="gallery-page-label">
+            <strong>{safePage + 1}</strong> / {pageCount}
+          </span>
+          <span className="gallery-dots">
+            {Array.from({ length: pageCount }, (_, i) => (
+              <button
+                key={i}
+                type="button"
+                className={`gallery-dot${i === safePage ? " active" : ""}`}
+                aria-label={`Page ${i + 1}`}
+                aria-current={i === safePage ? "page" : undefined}
+                onClick={() => setPage(i)}
+              />
+            ))}
+          </span>
+        </div>
         <button
           type="button"
-          className="shell-button"
+          className="gallery-pill"
           disabled={safePage >= pageCount - 1}
           onClick={() => setPage(safePage + 1)}
         >
           Next →
         </button>
-      </div>
+      </nav>
     </div>
   );
 }
@@ -96,12 +118,17 @@ function GalleryCard({ card }: { card: CatalogCardEntry }): ReactElement {
   const description = describeCard({ ...card.props, category: card.category, name: card.name } as Card, { priority: false });
   const orders = describeMonsterOrders({ ...card.props, category: card.category } as Card);
   return (
-    <div className="gallery-card">
+    <div className={`gallery-card ${card.category}`}>
       <FramedCard card={card} description={description} />
       {orders ? <div className="gallery-desc">{orders}</div> : null}
-      <div className="gallery-decks">
+      <div className={`gallery-decks${entries.length === 0 ? " none" : ""}`}>
         {entries.length > 0
-          ? entries.map((e) => (e.copies > 0 ? `${e.classDef.name} ×${e.copies}` : `${e.classDef.name} (custom decks)`)).join(" · ")
+          ? entries.map((e) => (
+              <span key={e.classDef.id} className="gallery-deck">
+                {e.classDef.name}
+                <span className="gallery-deck-copies">{e.copies > 0 ? `×${e.copies}` : "custom"}</span>
+              </span>
+            ))
           : "Not in any deck"}
       </div>
     </div>
