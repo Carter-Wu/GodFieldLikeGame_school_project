@@ -35,8 +35,8 @@ const { FLAT, PERCENT } = MODIFIER_MODE;
 const synergies: CatalogRows["synergies"] = [
   {
     id: "bulwark",
-    name: "Bulwark (example)",
-    description: "Placeholder synergy: rewards playing defend cards.",
+    name: "Bulwark",
+    description: "Every shield raised hardens the Guardian: defend cards build up DEF.",
     counts_category: DEFEND,
     tiers: [
       { count: 2, effects: [statModifier("def", FLAT, 5)] },
@@ -45,8 +45,8 @@ const synergies: CatalogRows["synergies"] = [
   },
   {
     id: "kindling",
-    name: "Kindling (example)",
-    description: "Placeholder synergy: aggression (attack cards) fuels ultimate charge.",
+    name: "Kindling",
+    description: "Every strike stokes the flames: attack cards build ultimate regen.",
     counts_category: ATTACK,
     tiers: [
       { count: 2, effects: [statModifier("ur", FLAT, 2)] },
@@ -88,7 +88,7 @@ const synergies: CatalogRows["synergies"] = [
 const classes: CatalogRows["classes"] = [
   {
     id: "guardian",
-    name: "Guardian (example)",
+    name: "Guardian",
     base_stats: { hp: 44, def: 6, mr: 2, er: 2, ur: 6, crit: 0 },
     ultimate: {
       id: "guardian_ultimate",
@@ -102,7 +102,7 @@ const classes: CatalogRows["classes"] = [
   },
   {
     id: "pyromancer",
-    name: "Pyromancer (example)",
+    name: "Pyromancer",
     base_stats: { hp: 34, def: 2, mr: 3, er: 4, ur: 8, crit: 0 },
     ultimate: {
       id: "pyromancer_ultimate",
