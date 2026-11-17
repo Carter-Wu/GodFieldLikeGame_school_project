@@ -92,8 +92,8 @@ const classes: CatalogRows["classes"] = [
     base_stats: { hp: 44, def: 6, mr: 2, er: 2, ur: 6, crit: 0 },
     ultimate: {
       id: "guardian_ultimate",
-      name: "TBD",
-      description: "Placeholder -- ultimate name/theme is still an open question.",
+      name: "Unbreakable Bastion",
+      description: "The Guardian becomes an unbreakable wall and crashes forward: 14 damage.",
       cost: 24,
       damage: 14,
     },
@@ -106,8 +106,8 @@ const classes: CatalogRows["classes"] = [
     base_stats: { hp: 34, def: 2, mr: 3, er: 4, ur: 8, crit: 0 },
     ultimate: {
       id: "pyromancer_ultimate",
-      name: "TBD",
-      description: "Placeholder -- ultimate name/theme is still an open question.",
+      name: "Cataclysm",
+      description: "The sky splits and rains fire: 18 damage.",
       cost: 20,
       damage: 18,
     },

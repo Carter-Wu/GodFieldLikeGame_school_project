@@ -63,7 +63,7 @@ export function RandomLobby({ playerClass, deckId, deckName, onReady, onBack }: 
   return (
     <div className="shell-screen">
       <div className="shell-topbar">
-        <span className="shell-title">Godfield-lite — Random match</span>
+        <span className="shell-title">Zenkake — Random match</span>
         <button type="button" className="shell-button" onClick={back}>
           Back
         </button>
