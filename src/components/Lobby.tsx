@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import type { ClassDef } from "../model/classes.ts";
 import { createPrivateMatch, joinPrivateMatch, type RandomMatch } from "../online/randomMatch.ts";
+import { RoomScreen } from "./RoomScreen.tsx";
 
 export interface LobbyProps {
   mode: "create" | "join";
@@ -14,17 +15,21 @@ export interface LobbyProps {
   onBack: () => void;
 }
 
+type Phase = "connecting" | "waiting" | "joined" | "failed";
+
 /**
  * Private-room lobby (React shell): create a room / join by code, wait for
  * start. The room lives on the Colyseus server, same as a random match, so
  * it gets the same turn timer and 30s reconnection.
  */
 export function Lobby({ mode, playerClass, deckId, deckName, code, onReady, onBack }: LobbyProps): ReactElement {
-  const [status, setStatus] = useState("Connecting…");
+  const [phase, setPhase] = useState<Phase>("connecting");
+  const [error, setError] = useState("");
   const [roomCode, setRoomCode] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [copied, setCopied] = useState(false);
   const matchRef = useRef<RandomMatch | null>(null);
   const startedRef = useRef(false);
+  const copiedTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,28 +55,33 @@ export function Lobby({ mode, playerClass, deckId, deckName, code, onReady, onBa
         else {
           if (mode === "create") {
             setRoomCode(match.code);
-            setStatus("Send this room code to a friend. Waiting for them to join… (click the code to copy it)");
-          } else setStatus("Joined! Starting the battle…");
+            setPhase("waiting");
+          } else setPhase("joined");
           offView = match.onView(start);
         }
       },
       (err: Error) => {
         if (cancelled) return;
-        setStatus(err.message || "Couldn't reach the match server.");
-        setFailed(true);
+        setError(err.message || "Couldn't reach the match server.");
+        setPhase("failed");
       }
     );
 
     return () => {
       cancelled = true;
       offView?.();
+      window.clearTimeout(copiedTimer.current);
     };
   }, []);
 
   const copyCode = (): void => {
     if (!roomCode) return;
     navigator.clipboard?.writeText(roomCode).then(
-      () => setStatus("Code copied! Waiting for your friend to join…"),
+      () => {
+        setCopied(true);
+        window.clearTimeout(copiedTimer.current);
+        copiedTimer.current = window.setTimeout(() => setCopied(false), 1800);
+      },
       () => {}
     );
   };
@@ -83,27 +93,44 @@ export function Lobby({ mode, playerClass, deckId, deckName, code, onReady, onBa
   };
 
   return (
-    <div className="shell-screen">
-      <div className="shell-topbar">
-        <span className="shell-title">Zenkake — Online</span>
-        <button type="button" className="shell-button" onClick={back}>
-          Back
-        </button>
-      </div>
-      <p className="shell-subtitle">
-        Playing as {playerClass.name} · {deckName}
-      </p>
-      {roomCode ? (
-        <button type="button" className="lobby-code" onClick={copyCode} title="Click to copy">
-          {roomCode}
-        </button>
-      ) : null}
-      <p className="lobby-status">{status}</p>
-      {failed ? (
-        <button type="button" className="shell-button" onClick={back}>
-          Back
-        </button>
-      ) : null}
-    </div>
+    <RoomScreen
+      title="Private Room"
+      playerClass={playerClass}
+      deckName={deckName}
+      onBack={back}
+      toast={copied ? "Room code copied" : null}
+    >
+      {phase === "waiting" && roomCode ? (
+        <>
+          <p className="room-label">Room code</p>
+          <button
+            type="button"
+            className={`room-code${copied ? " copied" : ""}`}
+            onClick={copyCode}
+            aria-label={`Room code ${roomCode}. Click to copy.`}
+          >
+            <span className="room-code-ring" aria-hidden="true" />
+            <span className="room-code-text">{roomCode}</span>
+            <span className="room-code-hint">{copied ? "✓ Copied!" : "Click to copy"}</span>
+          </button>
+          <p className="room-note">Send this code to a friend.</p>
+          <p className="room-status waiting">Waiting for them to join</p>
+        </>
+      ) : phase === "failed" ? (
+        <>
+          <p className="room-status error">{error}</p>
+          <button type="button" className="room-action" onClick={back}>
+            Back to lobby
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="room-seal" aria-hidden="true" />
+          <p className="room-status waiting">
+            {phase === "joined" ? "Joined! Starting the battle" : mode === "join" ? `Joining room ${code ?? ""}` : "Opening a room"}
+          </p>
+        </>
+      )}
+    </RoomScreen>
   );
 }

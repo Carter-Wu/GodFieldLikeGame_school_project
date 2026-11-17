@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import type { ClassDef } from "../model/classes.ts";
 import { findRandomMatch, type RandomMatch } from "../online/randomMatch.ts";
+import { RoomScreen } from "./RoomScreen.tsx";
 
 export interface RandomLobbyProps {
   playerClass: ClassDef;
@@ -61,22 +62,20 @@ export function RandomLobby({ playerClass, deckId, deckName, onReady, onBack }: 
   };
 
   return (
-    <div className="shell-screen">
-      <div className="shell-topbar">
-        <span className="shell-title">Zenkake — Random match</span>
-        <button type="button" className="shell-button" onClick={back}>
-          Back
-        </button>
-      </div>
-      <p className="shell-subtitle">
-        Playing as {playerClass.name} · {deckName}
-      </p>
-      <p className="lobby-status">{status}</p>
+    <RoomScreen title="Random Match" playerClass={playerClass} deckName={deckName} onBack={back}>
       {failed ? (
-        <button type="button" className="shell-button" onClick={back}>
-          Back
-        </button>
-      ) : null}
-    </div>
+        <>
+          <p className="room-status error">{status}</p>
+          <button type="button" className="room-action" onClick={back}>
+            Back to lobby
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="room-seal" aria-hidden="true" />
+          <p className="room-status waiting">{status.replace(/…$/, "")}</p>
+        </>
+      )}
+    </RoomScreen>
   );
 }

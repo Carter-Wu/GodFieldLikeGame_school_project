@@ -2065,31 +2065,386 @@ body {
   background: #b5423a;
 }
 
-/* --- Lobby ---------------------------------------------------------- */
+/* --- Online waiting screens (Lobby.tsx, RandomLobby.tsx via RoomScreen) --
+   Same look as My Record / Card Gallery: the title-screen hall behind
+   (.gallery-backdrop), Cinzel title, Outfit numbers, Inter body, warm
+   neutral glass panels with a thin gold edge. */
 
-.lobby-code {
-  display: block;
-  margin: 24px auto 8px;
-  padding: 8px 24px;
-  border: 0;
-  border-radius: 8px;
-  background: #1a1b1e;
-  color: #ffffff;
-  font-size: 56px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
-  cursor: pointer;
-  font-family: inherit;
+.room-screen {
+  --rm-gold: #e2c588;
+  --rm-gold-dim: rgba(226, 197, 136, 0.45);
+  --rm-line: rgba(226, 197, 136, 0.18);
+  --rm-glass: linear-gradient(to bottom, rgba(30, 27, 24, 0.55), rgba(14, 13, 12, 0.66));
+  --rm-text: #f4f1ea;
+  --rm-soft: #ddd6c9;
+  --rm-muted: #bfb6a8;
+  --rm-display: "Cinzel", "Cormorant Garamond", Georgia, serif;
+  --rm-num: "Outfit", "Inter", "Helvetica Neue", Arial, sans-serif;
+  --rm-body: "Inter", "Helvetica Neue", Arial, sans-serif;
+  max-width: 1000px;
+  font-family: var(--rm-body);
+  color: var(--rm-text);
+  /* Opacity only: a transform here would clip the fixed backdrop. */
+  animation: gallery-fade 0.45s ease both;
 }
 
-.lobby-status {
-  margin: 12px 0;
-  font-size: 15px;
+.room-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 4px 18px;
+  border-bottom: 1px solid var(--rm-line);
+}
+
+.room-title {
+  margin: 0;
+  font-family: var(--rm-display);
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  color: #f3e6c4;
+  text-shadow: 0 0 18px rgba(226, 197, 136, 0.35), 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+
+.room-subtitle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 0;
+  font-size: 17px;
+  color: var(--rm-muted);
+}
+
+.room-accent {
+  font-weight: 600;
+  color: var(--rm-gold);
+}
+
+.room-sep {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--rm-gold-dim);
+}
+
+/* Glass pill, same as the My Record / Card Gallery Back button. */
+.room-back,
+.room-action {
+  flex: none;
+  padding: 11px 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(30, 27, 24, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--rm-soft);
+  font-family: var(--rm-num);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.room-back:hover,
+.room-action:hover {
+  border-color: var(--rm-gold-dim);
+  background: rgba(44, 39, 33, 0.6);
+  color: #fff6df;
+  box-shadow: 0 0 18px rgba(226, 185, 100, 0.18);
+}
+
+.room-panel {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 28px auto 0;
+  max-width: 640px;
+  padding: 34px 28px 36px;
+  border-radius: 20px;
+  border: 1px solid rgba(226, 197, 136, 0.16);
+  background: var(--rm-glass);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 24px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
   text-align: center;
 }
 
-/* Modal dialogs from src/ui/dialog.js (join-room code, leave-match
-   confirmation), centered over the canvas. Colors match src/scenes/theme.js. */
+/* Faint gold light from the top edge. */
+.room-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 120px;
+  background: radial-gradient(ellipse 60% 100% at 50% 0%, rgba(226, 197, 136, 0.12), transparent 70%);
+  pointer-events: none;
+}
+
+.room-label {
+  margin: 0 0 18px;
+  font-family: var(--rm-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--rm-gold);
+}
+
+/* The room code as a relic plate: double gold frame, corner studs, a slow
+   rune ring behind the letters. */
+.room-code {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 46px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--rm-gold-dim);
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(226, 185, 100, 0.12), transparent 70%),
+    rgba(12, 11, 10, 0.5);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow:
+    inset 0 0 0 4px rgba(8, 9, 11, 0.55),
+    inset 0 0 0 5px rgba(226, 197, 136, 0.28),
+    0 0 26px rgba(226, 185, 100, 0.18),
+    0 18px 40px rgba(0, 0, 0, 0.45);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+}
+
+.room-code::before,
+.room-code::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--rm-gold);
+  background: rgba(20, 17, 13, 0.9);
+  transform: translateY(-50%) rotate(45deg);
+  box-shadow: 0 0 10px rgba(226, 185, 100, 0.5);
+}
+
+.room-code::before { left: -5px; }
+.room-code::after { right: -5px; }
+
+.room-code:hover {
+  border-color: var(--rm-gold);
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 0 0 4px rgba(8, 9, 11, 0.55),
+    inset 0 0 0 5px rgba(226, 197, 136, 0.5),
+    0 0 42px rgba(226, 185, 100, 0.38),
+    0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+.room-code:focus-visible {
+  outline: 2px solid var(--rm-gold);
+  outline-offset: 4px;
+}
+
+.room-code.copied {
+  border-color: #f0d79e;
+  animation: room-copied 0.6s ease;
+}
+
+@keyframes room-copied {
+  0% { box-shadow: inset 0 0 0 4px rgba(8, 9, 11, 0.55), inset 0 0 0 5px rgba(240, 215, 158, 0.9), 0 0 70px rgba(240, 200, 120, 0.7), 0 18px 40px rgba(0, 0, 0, 0.45); }
+}
+
+.room-code-ring {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  width: 190px;
+  height: 190px;
+  margin: -95px 0 0 -95px;
+  border-radius: 50%;
+  border: 1px dashed rgba(226, 197, 136, 0.22);
+  box-shadow: 0 0 0 14px rgba(226, 197, 136, 0.03), inset 0 0 0 10px transparent, inset 0 0 0 11px rgba(226, 197, 136, 0.1);
+  pointer-events: none;
+  animation: room-spin 40s linear infinite;
+}
+
+@keyframes room-spin {
+  to { transform: rotate(360deg); }
+}
+
+.room-code-text {
+  position: relative;
+  padding-left: 0.3em; /* balance the trailing letter-spacing */
+  font-family: var(--rm-num);
+  font-size: 68px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.3em;
+  color: #fbf0d4;
+  text-shadow: 0 0 22px rgba(226, 185, 100, 0.55), 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
+.room-code-hint {
+  position: relative;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--rm-muted);
+  transition: color 0.2s ease;
+}
+
+.room-code:hover .room-code-hint {
+  color: var(--rm-soft);
+}
+
+.room-code.copied .room-code-hint {
+  color: #9fe0b0;
+}
+
+.room-note {
+  margin: 26px 0 0;
+  font-size: 18px;
+  color: var(--rm-soft);
+}
+
+.room-status {
+  margin: 10px 0 0;
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--rm-text);
+}
+
+/* Breathing pulse plus animated dots for the "waiting" lines. */
+.room-status.waiting {
+  color: #f3e6c4;
+  text-shadow: 0 0 14px rgba(226, 197, 136, 0.3);
+  animation: room-breathe 2.6s ease-in-out infinite;
+}
+
+.room-status.waiting::after {
+  content: "";
+  display: inline-block;
+  width: 1.2em;
+  text-align: left;
+  animation: room-dots 1.6s steps(4, end) infinite;
+}
+
+@keyframes room-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes room-dots {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75%, 100% { content: "..."; }
+}
+
+.room-status.error {
+  margin: 0 0 20px;
+  color: #f2a094;
+}
+
+/* Spinning seal while connecting / searching. */
+.room-seal {
+  position: relative;
+  width: 92px;
+  height: 92px;
+  margin-bottom: 14px;
+  border-radius: 50%;
+  border: 1px dashed rgba(226, 197, 136, 0.45);
+  box-shadow: 0 0 24px rgba(226, 185, 100, 0.2);
+  animation: room-spin 12s linear infinite;
+}
+
+.room-seal::before {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--rm-gold);
+  border-left-color: rgba(226, 197, 136, 0.35);
+  animation: room-spin 1.4s linear infinite reverse;
+}
+
+.room-seal::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  transform: rotate(45deg);
+  background: var(--rm-gold);
+  box-shadow: 0 0 14px rgba(226, 185, 100, 0.8);
+}
+
+/* Toast at the bottom (copy feedback). */
+.room-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 40px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--rm-gold-dim);
+  background: rgba(24, 21, 18, 0.78);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 0 24px rgba(226, 185, 100, 0.25), 0 14px 34px rgba(0, 0, 0, 0.5);
+  color: #fff3d6;
+  font-family: var(--rm-num);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 12px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.room-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.room-toast-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(127, 220, 154, 0.18);
+  color: #9fe0b0;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .room-title { font-size: 30px; }
+  .room-subtitle { font-size: 15px; }
+  .room-panel { padding: 28px 16px 30px; }
+  .room-code { padding: 22px 26px 16px; }
+  .room-code-text { font-size: 48px; }
+  .room-code-ring { width: 150px; height: 150px; margin: -75px 0 0 -75px; }
+}
+
+/* Modal dialogs (Dialog.tsx and src/ui/dialog.ts: join-room code, leave-match
+   confirmation, errors): blurred page behind, glass panel, gold input focus,
+   dark border Cancel and lobby-style gold primary button. */
 
 .dialog-backdrop {
   position: fixed;
@@ -2099,89 +2454,157 @@ body {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(10, 12, 20, 0.6);
-  animation: dialog-fade 120ms ease-out;
+  background: radial-gradient(ellipse at center, rgba(8, 8, 10, 0.4), rgba(6, 6, 8, 0.72));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: dialog-fade 160ms ease-out;
 }
 
 .dialog-box {
-  width: min(360px, 100%);
-  padding: 22px 22px 18px;
-  border-radius: 14px;
-  background: #2e3033;
-  border: 1px solid #484b51;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
-  color: #e9eaec;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  line-height: 1.4;
-  animation: dialog-pop 160ms ease-out;
+  position: relative;
+  overflow: hidden;
+  width: min(440px, 100%);
+  padding: 30px 30px 26px;
+  border-radius: 20px;
+  border: 1px solid rgba(226, 197, 136, 0.22);
+  background: linear-gradient(to bottom, rgba(34, 30, 26, 0.72), rgba(14, 13, 12, 0.82));
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 40px rgba(226, 185, 100, 0.08),
+    0 30px 80px rgba(0, 0, 0, 0.7);
+  color: #f4f1ea;
+  font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.45;
+  animation: dialog-pop 200ms ease-out;
+}
+
+.dialog-box::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 110px;
+  background: radial-gradient(ellipse 60% 100% at 50% 0%, rgba(226, 197, 136, 0.13), transparent 70%);
+  pointer-events: none;
 }
 
 .dialog-title {
-  margin: 0 0 6px;
-  font-size: 18px;
-  color: #ffffff;
+  position: relative;
+  margin: 0 0 8px;
+  font-family: "Cinzel", "Cormorant Garamond", Georgia, serif;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #f3e6c4;
+  text-shadow: 0 0 16px rgba(226, 197, 136, 0.3), 0 2px 8px rgba(0, 0, 0, 0.6);
 }
 
 .dialog-message {
-  margin: 0 0 14px;
-  font-size: 14px;
-  color: #a9abb0;
+  position: relative;
+  margin: 0 0 20px;
+  font-size: 16px;
+  color: #ddd6c9;
 }
 
 .dialog-input {
+  position: relative;
   width: 100%;
-  margin-bottom: 16px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid #484b51;
-  background: #1a1b1e;
-  color: #ffffff;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.3em;
+  margin-bottom: 22px;
+  padding: 14px 12px 14px calc(12px + 0.4em);
+  border-radius: 12px;
+  border: 1px solid rgba(226, 197, 136, 0.22);
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(10, 9, 8, 0.4));
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.6);
+  color: #fbf0d4;
+  font-family: "Outfit", "Inter", "Helvetica Neue", Arial, sans-serif;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: 0.4em;
   text-align: center;
   outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dialog-input::placeholder {
+  color: rgba(226, 197, 136, 0.28);
 }
 
 .dialog-input:focus {
-  border-color: #c49b3a;
+  border-color: #e2c588;
+  box-shadow:
+    inset 0 2px 10px rgba(0, 0, 0, 0.6),
+    0 0 0 3px rgba(226, 197, 136, 0.14),
+    0 0 26px rgba(226, 185, 100, 0.3);
+  text-shadow: 0 0 16px rgba(226, 185, 100, 0.45);
 }
 
 .dialog-buttons {
+  position: relative;
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 12px;
 }
 
 .dialog-button {
-  min-width: 88px;
-  padding: 9px 14px;
-  border: 0;
-  border-radius: 8px;
-  background: #484b51;
-  color: #ffffff;
-  font-size: 14px;
+  min-width: 112px;
+  height: 48px;
+  padding: 0 22px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(30, 27, 24, 0.5);
+  color: #ddd6c9;
+  font-family: "Outfit", "Inter", "Helvetica Neue", Arial, sans-serif;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
   cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
 }
 
 .dialog-button:hover {
-  background: #5a5e65;
+  border-color: rgba(226, 197, 136, 0.45);
+  background: rgba(44, 39, 33, 0.6);
+  color: #fff6df;
 }
 
+.dialog-button:focus-visible {
+  outline: 2px solid #e2c588;
+  outline-offset: 3px;
+}
+
+/* Same as the lobby's Random match button (.lobby-btn.primary). */
 .dialog-button-primary {
-  background: #a8842f;
+  border-color: #e2c588;
+  background: linear-gradient(to bottom, rgba(110, 84, 40, 0.85), rgba(40, 30, 15, 0.92));
+  color: #fff3d6;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  box-shadow: inset 0 0 0 3px rgba(8, 9, 11, 0.55), inset 0 0 0 4px rgba(226, 197, 136, 0.45), 0 0 24px rgba(226, 185, 100, 0.3);
 }
 
 .dialog-button-primary:hover {
-  background: #c49b3a;
+  border-color: #e2c588;
+  background: linear-gradient(to bottom, rgba(126, 96, 46, 0.9), rgba(48, 36, 18, 0.94));
+  color: #fff3d6;
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 3px rgba(8, 9, 11, 0.55), inset 0 0 0 4px rgba(226, 197, 136, 0.6), 0 0 36px rgba(226, 185, 100, 0.48);
 }
 
 .dialog-button-danger {
-  background: #b5423a;
+  border-color: rgba(242, 128, 111, 0.7);
+  background: linear-gradient(to bottom, rgba(120, 44, 36, 0.85), rgba(46, 16, 13, 0.92));
+  color: #ffe4de;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 3px rgba(8, 9, 11, 0.5), 0 0 22px rgba(220, 90, 70, 0.25);
 }
 
 .dialog-button-danger:hover {
-  background: #cc5047;
+  border-color: #f2806f;
+  background: linear-gradient(to bottom, rgba(140, 52, 42, 0.9), rgba(56, 20, 16, 0.94));
+  color: #fff0ec;
+  box-shadow: inset 0 0 0 3px rgba(8, 9, 11, 0.5), 0 0 32px rgba(220, 90, 70, 0.4);
 }
 
 @keyframes dialog-fade {
@@ -2189,7 +2612,17 @@ body {
 }
 
 @keyframes dialog-pop {
-  from { opacity: 0; transform: scale(0.95); }
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-code-ring,
+  .room-seal,
+  .room-seal::before,
+  .room-status.waiting,
+  .room-status.waiting::after {
+    animation: none;
+  }
 }
 
 /* --- Framed card (src/components/FramedCard.tsx) ---------------------------
