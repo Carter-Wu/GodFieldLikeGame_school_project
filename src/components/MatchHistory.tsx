@@ -27,16 +27,22 @@ export interface MatchHistoryProps {
 /** "My record" screen (React shell): all-time PvP record and the last few PvP games. Loaded by App. */
 export function MatchHistory({ username, history, error, onBack }: MatchHistoryProps): ReactElement {
   return (
-    <div className="shell-screen">
-      <div className="shell-topbar">
-        <span className="shell-title">My Record</span>
-        <button type="button" className="shell-button" onClick={onBack}>
+    <div className="shell-screen record-screen">
+      <header className="record-header">
+        <div className="record-heading">
+          <h1 className="record-title">My Record</h1>
+          <p className="record-subtitle">
+            <span className="record-user">{username}</span>
+            <span className="record-sep" aria-hidden="true" />
+            <span>Random matches only</span>
+          </p>
+        </div>
+        <button type="button" className="record-back" onClick={onBack}>
           ← Back
         </button>
-      </div>
-      <p className="shell-subtitle">{username} · Random matches only</p>
+      </header>
       {error ? (
-        <p className="shell-note">Couldn&apos;t load your match history: {error}</p>
+        <p className="record-card record-error">Couldn&apos;t load your match history: {error}</p>
       ) : (
         <HistoryPanel history={history} />
       )}
@@ -49,26 +55,40 @@ function HistoryPanel({ history }: { history: MatchHistoryData | null }): ReactE
   const total = record ? record.wins + record.draws + record.losses : 0;
   const winRate = record && total > 0 ? Math.round((record.wins / total) * 1000) / 10 : null;
   const games = history?.recent ?? null;
+  const share = (n: number): string => `${total > 0 ? (n / total) * 100 : 0}%`;
 
   return (
     <section className="history-panel">
-      <div className="history-record">
-        <span className="history-record-label">PvP record</span>
+      <div className="record-card history-record">
+        <h2 className="record-card-head">PvP record</h2>
         {record ? (
           <>
-            <span className="history-count win">{record.wins}W</span>
-            <span className="history-count draw">{record.draws}D</span>
-            <span className="history-count loss">{record.losses}L</span>
-            <span className="history-rate">
-              {winRate === null ? "No games yet" : `${winRate}% win rate · ${total} games`}
-            </span>
+            <div className="record-tally">
+              <RecordStat kind="win" value={record.wins} unit="W" label="Wins" />
+              <RecordStat kind="draw" value={record.draws} unit="D" label="Draws" />
+              <RecordStat kind="loss" value={record.losses} unit="L" label="Losses" />
+            </div>
+            <div className="record-bar" aria-hidden="true">
+              <span className="win" style={{ width: share(record.wins) }} />
+              <span className="draw" style={{ width: share(record.draws) }} />
+              <span className="loss" style={{ width: share(record.losses) }} />
+            </div>
+            <p className="history-rate">
+              {winRate === null ? (
+                "No games yet"
+              ) : (
+                <>
+                  <strong>{winRate}%</strong> win rate · {total} games
+                </>
+              )}
+            </p>
           </>
         ) : (
-          <span className="history-rate">Loading…</span>
+          <p className="history-rate">Loading…</p>
         )}
       </div>
-      <div className="history-recent">
-        <span className="history-record-label">Last {RECENT_LIMIT} PvP games</span>
+      <div className="record-card history-recent">
+        <h2 className="record-card-head">Last {RECENT_LIMIT} PvP games</h2>
         {games === null ? (
           <p className="history-empty">Loading…</p>
         ) : games.length === 0 ? (
@@ -91,5 +111,17 @@ function HistoryPanel({ history }: { history: MatchHistoryData | null }): ReactE
         )}
       </div>
     </section>
+  );
+}
+
+function RecordStat({ kind, value, unit, label }: { kind: HistoryEntry["result"]; value: number; unit: string; label: string }): ReactElement {
+  return (
+    <div className={`record-stat ${kind}`}>
+      <span className="record-num">
+        {value}
+        <span className="record-unit">{unit}</span>
+      </span>
+      <span className="record-stat-label">{label}</span>
+    </div>
   );
 }

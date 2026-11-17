@@ -836,66 +836,225 @@ body {
   }
 }
 
-/* --- Match history (class select) ------------------------------------ */
+/* --- My Record screen (MatchHistory) ---------------------------------- */
+/* Same look as the lobby: Cinzel title, Outfit numbers, Inter body, gold
+   accent, and warm neutral glass panels that let the blurred hall show
+   through (no navy fills). */
+
+.record-screen {
+  --rc-gold: #e2c588;
+  --rc-gold-dim: rgba(226, 197, 136, 0.45);
+  --rc-line: rgba(226, 197, 136, 0.18);
+  --rc-glass: linear-gradient(to bottom, rgba(30, 27, 24, 0.55), rgba(14, 13, 12, 0.66));
+  --rc-text: #f4f1ea;
+  --rc-soft: #ddd6c9;
+  --rc-muted: #bfb6a8;
+  --rc-win: #7fdc9a;
+  --rc-draw: #ddd5c3;
+  --rc-loss: #f2806f;
+  --rc-display: "Cinzel", "Cormorant Garamond", Georgia, serif;
+  --rc-num: "Outfit", "Inter", "Helvetica Neue", Arial, sans-serif;
+  --rc-body: "Inter", "Helvetica Neue", Arial, sans-serif;
+  max-width: 1000px;
+  font-family: var(--rc-body);
+  color: var(--rc-text);
+  animation: record-in 0.45s ease both;
+}
+
+@keyframes record-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.record-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 4px 18px;
+  border-bottom: 1px solid var(--rc-line);
+}
+
+.record-title {
+  margin: 0;
+  font-family: var(--rc-display);
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  color: #f3e6c4;
+  text-shadow: 0 0 18px rgba(226, 197, 136, 0.35), 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+
+.record-subtitle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 0;
+  font-size: 16px;
+  color: var(--rc-muted);
+}
+
+.record-user {
+  font-weight: 600;
+  color: var(--rc-gold);
+}
+
+.record-sep {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--rc-gold-dim);
+}
+
+.record-back {
+  flex: none;
+  padding: 11px 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(30, 27, 24, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--rc-soft);
+  font-family: var(--rc-num);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.record-back:hover {
+  border-color: var(--rc-gold-dim);
+  background: rgba(44, 39, 33, 0.6);
+  color: #fff6df;
+}
+
+.record-card {
+  position: relative;
+  overflow: hidden;
+  padding: 20px 24px 22px;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 197, 136, 0.16);
+  background: var(--rc-glass);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 20px 50px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+}
+
+/* Faint gold light from the top edge of each card. */
+.record-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 120px;
+  background: radial-gradient(ellipse 70% 100% at 20% 0%, rgba(226, 197, 136, 0.08), transparent 70%);
+  pointer-events: none;
+}
+
+.record-card > * {
+  position: relative;
+}
+
+.record-card-head {
+  margin: 0 0 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rc-line);
+  font-family: var(--rc-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rc-gold);
+}
+
+.record-error {
+  margin: 20px 0 0;
+  font-size: 16px;
+  color: var(--rc-soft);
+  text-align: center;
+}
 
 .history-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: 16px;
-  margin: 14px 0 4px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background: #2a2f42;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 18px;
+  margin: 20px 0 4px;
 }
 
-.history-record {
+/* W / D / L tally */
+.record-tally {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.record-stat {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  align-content: flex-start;
-  gap: 6px 10px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 6px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
 }
 
-.history-record-label {
-  width: 100%;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #a9adc1;
+.record-num {
+  font-family: var(--rc-num);
+  font-size: 46px;
+  font-weight: 600;
+  line-height: 1;
 }
 
-.history-recent .history-record-label {
-  display: block;
-  margin-bottom: 6px;
-}
-
-.history-count {
+.record-unit {
+  margin-left: 2px;
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 500;
+  opacity: 0.85;
 }
 
-.history-count.win,
-.history-result.win {
-  color: #6fd08c;
+.record-stat-label {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--rc-muted);
 }
 
-.history-count.draw,
-.history-result.draw {
-  color: #c9cfe0;
+.record-stat.win .record-num { color: var(--rc-win); text-shadow: 0 0 16px rgba(127, 220, 154, 0.45); }
+.record-stat.draw .record-num { color: var(--rc-draw); text-shadow: 0 0 14px rgba(221, 213, 195, 0.3); }
+.record-stat.loss .record-num { color: var(--rc-loss); text-shadow: 0 0 16px rgba(242, 128, 111, 0.45); }
+
+.record-bar {
+  display: flex;
+  height: 6px;
+  margin: 18px 0 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.history-count.loss,
-.history-result.loss {
-  color: #ef6f6f;
-}
+.record-bar .win { background: var(--rc-win); box-shadow: 0 0 10px rgba(127, 220, 154, 0.5); }
+.record-bar .draw { background: rgba(221, 213, 195, 0.6); }
+.record-bar .loss { background: var(--rc-loss); }
 
 .history-rate {
-  width: 100%;
-  font-size: 13px;
-  color: #e8eaf0;
+  margin: 12px 0 0;
+  font-size: 16px;
+  color: var(--rc-soft);
 }
 
+.history-rate strong {
+  font-family: var(--rc-num);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--rc-gold);
+  text-shadow: 0 0 12px rgba(226, 197, 136, 0.35);
+}
+
+/* Recent games */
 .history-list {
   margin: 0;
   padding: 0;
@@ -905,21 +1064,33 @@ body {
 .history-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 5px 0;
-  font-size: 13px;
-  border-top: 1px solid #363c54;
+  gap: 14px;
+  padding: 10px 0;
+  font-size: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .history-row:first-child {
   border-top: 0;
+  padding-top: 2px;
 }
 
 .history-result {
-  width: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  font-family: var(--rc-num);
+  font-size: 16px;
   font-weight: 700;
-  text-align: center;
 }
+
+.history-result.win { color: var(--rc-win); background: rgba(127, 220, 154, 0.1); }
+.history-result.draw { color: var(--rc-draw); background: rgba(221, 213, 195, 0.08); }
+.history-result.loss { color: var(--rc-loss); background: rgba(242, 128, 111, 0.1); }
 
 .history-matchup {
   flex: 1;
@@ -927,28 +1098,49 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 .history-vs,
 .history-opponent,
 .history-meta {
-  color: #a9adc1;
+  font-weight: 400;
+  color: var(--rc-muted);
 }
 
 .history-meta {
-  font-size: 12px;
+  font-family: var(--rc-num);
+  font-size: 15px;
   white-space: nowrap;
 }
 
 .history-empty {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: #a9adc1;
+  margin: 4px 0 0;
+  font-size: 16px;
+  color: var(--rc-muted);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .history-panel {
     grid-template-columns: 1fr;
+  }
+
+  .record-header {
+    align-items: flex-start;
+  }
+
+  .record-title {
+    font-size: 32px;
+  }
+
+  .record-subtitle {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .record-sep {
+    display: none;
   }
 
   .history-meta {
