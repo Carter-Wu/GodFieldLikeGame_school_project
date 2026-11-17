@@ -92,7 +92,7 @@ const classes: CatalogRows["classes"] = [
   {
     id: "guardian",
     name: "Guardian",
-    base_stats: { hp: 44, def: 6, mr: 2, er: 2, ur: 6, crit: 0 },
+    base_stats: { hp: 44, def: 6, mr: 2, er: 2, ur: 6, crit: 0, atk: 1 },
     ultimate: {
       id: "guardian_ultimate",
       name: "Unbreakable Bastion",
@@ -107,7 +107,7 @@ const classes: CatalogRows["classes"] = [
   {
     id: "pyromancer",
     name: "Pyromancer",
-    base_stats: { hp: 34, def: 2, mr: 3, er: 4, ur: 8, crit: 0 },
+    base_stats: { hp: 38, def: 0, mr: 2, er: 4, ur: 6, crit: 0, atk: 2 },
     ultimate: {
       id: "pyromancer_ultimate",
       name: "Cataclysm",
