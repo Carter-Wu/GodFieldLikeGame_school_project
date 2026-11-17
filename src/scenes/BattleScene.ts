@@ -51,7 +51,7 @@ import {
   SETTINGS_ICON_KEY,
   BRAND_EMBLEM_KEY,
 } from "../phaserIcons.ts";
-import { loadCardArt, loadedArtKey } from "../cardArt.ts";
+import { loadCardArt, loadedArtKey, ultimateArtEntries } from "../cardArt.ts";
 import { STAT_STYLE, isStyledStat } from "../statIcons.ts";
 import { getVolume, playSfx, setVolume } from "../fx/sound.ts";
 import {
@@ -1003,7 +1003,7 @@ export class BattleScene extends Phaser.Scene {
     this.previewLayer = this.add.container(0, 0).setDepth(900);
 
     this.render();
-    loadCardArt(this, allCards(), () => this.render());
+    loadCardArt(this, [...allCards(), ...ultimateArtEntries(allClasses())], () => this.render());
     // Text is drawn once, so redraw when the card fonts (index.html) arrive.
     Promise.all(["700 16px Cinzel", "500 16px Outfit", "600 16px Outfit", "700 16px Outfit", "400 16px Jost", "400 16px Inter", "500 16px Inter", "600 16px Inter", "700 16px Inter", "800 16px Inter"].map((font) => document.fonts.load(font)))
       .then(() => this.sys.isActive() && this.render())
@@ -1195,6 +1195,7 @@ export class BattleScene extends Phaser.Scene {
       classId: fighter.classDef.id,
       className: shortName(fighter.classDef.name),
       ultimateName: ultimateName(fighter.classDef),
+      ultimateId: fighter.classDef.ultimate.id,
       hp: before[key],
       panel: () => this.panelViews[key] as RecapPanel,
       fieldCenter: () => ({ x: (key === "cpu" ? CPU_FIELD_X : PLAYER_FIELD_X) + FIELD_W / 2, y: FIELD_Y + FIELD_H / 2 }),
@@ -2907,7 +2908,15 @@ export class BattleScene extends Phaser.Scene {
       const ultimate = pending ? pending.ultimate : this.stagedUltimate;
       const faces: Array<{ data: CardFaceData; cardId: number | null }> = cards.map((c) => ({ data: cardFaceData(c), cardId: c.id }));
       if (ultimate) {
-        faces.push({ data: { category: "ultimate", name: ultimateName(this.battle.player.classDef), description: "" }, cardId: null });
+        faces.push({
+          data: {
+            category: "ultimate",
+            cardId: this.battle.player.classDef.ultimate.id, // its artwork, if any
+            name: ultimateName(this.battle.player.classDef),
+            description: "",
+          },
+          cardId: null,
+        });
       }
       if (faces.length === 0) {
         if (pending) {

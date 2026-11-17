@@ -109,7 +109,7 @@ export function App(): ReactElement {
     setDialog({
       kind: "confirm",
       title: `Welcome, ${auth.account?.username ?? "Player"}!`,
-      message: "New to Godfield-lite? The tutorial is a guided practice match that shows you how everything works, step by step. You can also open it later from the home screen.",
+      message: "New to Zenkake? The tutorial is a guided practice match that shows you how everything works, step by step. You can also open it later from the home screen.",
       confirmLabel: "Start tutorial",
       cancelLabel: "Skip",
       onConfirm: () => answer(true),

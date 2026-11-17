@@ -59,10 +59,16 @@ export function cardFaceData(card: Card): CardFaceData {
 }
 
 // Face data for one resolved play (from a fighter's lastTurn): the card, or
-// the gold ultimate card.
-export function actionFace(action: PlayRecord, ultimateName: string): CardFaceData {
+// the gold ultimate card (`ultimateId` finds its artwork, if any).
+export function actionFace(action: PlayRecord, ultimateName: string, ultimateId: string | null = null): CardFaceData {
   if (action.kind === "ultimate") {
-    return { category: "ultimate", name: ultimateName, description: `${action.damage ?? 0} damage`, priority: action.priority ?? ULTIMATE_PRIORITY };
+    return {
+      category: "ultimate",
+      cardId: ultimateId,
+      name: ultimateName,
+      description: `${action.damage ?? 0} damage`,
+      priority: action.priority ?? ULTIMATE_PRIORITY,
+    };
   }
   return {
     cardId: action.cardId,

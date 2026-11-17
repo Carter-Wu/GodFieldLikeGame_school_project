@@ -16,6 +16,10 @@ export interface Ultimate {
   // boost, Necromancer's summons), lasting `duration` rounds.
   effects?: Effect[];
   duration?: number;
+  // Optional artwork for the gold ultimate card and the class menu, like a
+  // card's image_url: a full URL or a site path such as
+  // /cards/guardian_ultimate.jpg. Absent = the ultimate icon.
+  imageUrl?: string | null;
 }
 
 export interface ClassDef {

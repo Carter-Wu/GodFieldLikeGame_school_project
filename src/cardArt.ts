@@ -8,6 +8,7 @@
 
 import type Phaser from "phaser";
 import type { CatalogCardEntry } from "./model/catalog.ts";
+import type { ClassDef } from "./model/classes.ts";
 
 // Card art is drawn at 4:3; SVGs are rasterized at this size so they stay
 // sharp in the largest place they're shown (the round recap).
@@ -27,8 +28,13 @@ export function loadedArtKey(scene: Phaser.Scene, cardId: string | null | undefi
 
 // Queue the artwork of every given catalog card that isn't loaded yet, and
 // call onLoaded() once they're in (only if something was queued and the
-// scene is still running).
-export function loadCardArt(scene: Phaser.Scene, cards: CatalogCardEntry[], onLoaded: () => void): void {
+// scene is still running). Anything with an id and an imageUrl works, e.g.
+// a class's ultimate (ultimateArtEntries).
+export function loadCardArt(
+  scene: Phaser.Scene,
+  cards: Array<Pick<CatalogCardEntry, "id" | "imageUrl">>,
+  onLoaded: () => void
+): void {
   const pending = cards.filter((card) => card.imageUrl && !scene.textures.exists(cardArtKey(card.id)));
   if (pending.length === 0) return;
 
@@ -95,4 +101,11 @@ export function sizedArtKey(scene: Phaser.Scene, key: string, width: number, hei
   texture.refresh();
   void ctx;
   return sizedKey;
+}
+
+// The classes' ultimates that have artwork, in the shape loadCardArt takes.
+// Their texture is keyed by the ultimate's id (e.g. guardian_ultimate), which
+// the gold ultimate card face passes as its cardId.
+export function ultimateArtEntries(classes: ClassDef[]): Array<Pick<CatalogCardEntry, "id" | "imageUrl">> {
+  return classes.filter((c) => c.ultimate.imageUrl).map((c) => ({ id: c.ultimate.id, imageUrl: c.ultimate.imageUrl ?? null }));
 }
