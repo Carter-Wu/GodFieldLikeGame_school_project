@@ -85,7 +85,7 @@ export function Lobby({ mode, playerClass, deckId, deckName, code, onReady, onBa
   return (
     <div className="shell-screen">
       <div className="shell-topbar">
-        <span className="shell-title">Godfield-lite — Online</span>
+        <span className="shell-title">Zenkake — Online</span>
         <button type="button" className="shell-button" onClick={back}>
           Back
         </button>

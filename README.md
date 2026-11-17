@@ -23,6 +23,7 @@ npm run preview   # serve that production build locally
 npm run lint      # ESLint
 npm run typecheck # tsc --noEmit (strict)
 npm test          # Vitest (tests/)
+npm run balance   # CPU-vs-CPU matches between every pair of classes; prints each class's win rates
 ```
 
 `legacy/` isn't part of the production build — its scripts are plain global `<script>` tags with
@@ -78,7 +79,8 @@ Vite serves it as-is.
    - **Debuff**: a negative effect on the opponent (e.g. drain their ultimate meter, or disable
      one of their synergies for a few rounds).
 3. Your class's synergy gets stronger tiers the more you play the card type it rewards (e.g.
-   Guardian's Bulwark synergy raises DEF further the more defend cards you've played).
+   Guardian's Bulwark synergy raises DEF further the more defend cards you've played). Every
+   class's synergy and tiers are in [docs/SYNERGIES.md](docs/SYNERGIES.md).
 4. Every round your ultimate meter fills by your UR (ultimate regen) stat. Once it's full, "Use
    Ultimate" becomes available as an extra action instead of playing a card.
 5. Reduce the opponent's HP to 0 to win. If a round drops both fighters to 0 HP at once (e.g.
@@ -412,6 +414,7 @@ includes in the public match state — so online matches need the `game` functio
 | `src/style.css` | React shell styles + Phaser canvas positioning |
 | `src/model/` | The class/stat/synergy/card data model + battle engine (see below) |
 | `docs/DESIGN.md` | Design notes this is built from, including what's still open/unimplemented |
+| `docs/SYNERGIES.md` | How class synergies work, each class's tiers, and how to change or add one |
 | `model-demo.html` | Standalone smoke test for `src/model/`, independent of the UI |
 | `legacy/` | The original simple attack/defense-only prototype (no classes/synergies), kept for reference |
 

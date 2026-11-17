@@ -911,7 +911,12 @@ export function isBattleOver(battle: Battle): boolean {
 // is a fair simultaneous decision, not a reaction to what the player is
 // about to do.
 function chooseCpuAction(battle: Battle): Action {
-  const cpu = battle.cpu;
+  return chooseAiAction(battle.cpu, battle.player);
+}
+
+// The same pick for any fighter against `opponent` -- the balance simulator
+// (scripts/balance-sim.ts) plays both sides of a match with it.
+export function chooseAiAction(cpu: Fighter, opponent: Fighter): Action {
   const lowHp = cpu.hp <= cpu.maxHp * 0.4;
   const score = (card: Card): number => {
     const jitter = random() * 2;
@@ -946,7 +951,7 @@ function chooseCpuAction(battle: Battle): Action {
     const tryOrder = (use: MonsterOrder["use"]): boolean => {
       const order: MonsterOrder = { uid: monster.uid, use, target: null };
       if (checkPlan(cpu, picked, false, [...orders, order]).problem) return false;
-      order.target = orderNeedsTarget(monster, use) ? cpuTarget(battle.player, use === "attack" ? monster.atk : (monster.ability?.damage ?? 0)) : null;
+      order.target = orderNeedsTarget(monster, use) ? cpuTarget(opponent, use === "attack" ? monster.atk : (monster.ability?.damage ?? 0)) : null;
       orders.push(order);
       return true;
     };
@@ -955,7 +960,7 @@ function chooseCpuAction(battle: Battle): Action {
   }
 
   const targets: Record<number, Target> = {};
-  for (const card of picked) if (cardNeedsTarget(card)) targets[card.id] = cpuTarget(battle.player, (card as AttackCard).value);
+  for (const card of picked) if (cardNeedsTarget(card)) targets[card.id] = cpuTarget(opponent, (card as AttackCard).value);
   return { cards: picked, ultimate: checkPlan(cpu, picked, true, orders).problem === null, targets, orders };
 }
 
