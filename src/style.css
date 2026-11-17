@@ -2608,6 +2608,24 @@ body {
   height: 32px;
 }
 
+/* An ultimate's artwork in place of its icon: a wider gold-edged frame. */
+.lobby-slot-art {
+  flex: none;
+  width: 104px;
+  height: 78px;
+  border-radius: 12px;
+  border: 1px solid var(--lb-gold);
+  object-fit: cover;
+  box-shadow: inset 0 0 0 3px rgba(8, 9, 11, 0.7), 0 0 18px rgba(226, 185, 100, 0.25);
+}
+
+@media (max-width: 520px) {
+  .lobby-slot-art {
+    width: 76px;
+    height: 58px;
+  }
+}
+
 .lobby-slot-body {
   min-width: 0;
   flex: 1;

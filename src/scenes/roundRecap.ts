@@ -48,6 +48,7 @@ export interface RecapSide {
   classId: string;
   className: string;
   ultimateName: string;
+  ultimateId: string; // keys the ultimate card's artwork, if it has any
   hp: number; // HP shown before this round (counted down as hits land)
   panel: () => RecapPanel;
   fieldCenter: () => { x: number; y: number }; // middle of this side's monster field
@@ -333,7 +334,7 @@ async function playStep(run: RoundRecapRun, key: Key, play: PlayRecord): Promise
   const { caption, resultText } = captionFor(run, side, play.kind === "ultimate" ? side.ultimateName : (play.name ?? ""));
 
   // The card appears on its slot, rises for its moment, then fades.
-  const face = drawCardFace(scene, actionFace(play, side.ultimateName), slot.faceW, slot.faceH).container;
+  const face = drawCardFace(scene, actionFace(play, side.ultimateName, side.ultimateId), slot.faceW, slot.faceH).container;
   face.setPosition(slot.x + (slot.w - slot.faceW) / 2, slot.y + (slot.h - slot.faceH) / 2).setAlpha(0);
   layer.add(face);
   await tween(run, { targets: face, alpha: 1, duration: 120 });

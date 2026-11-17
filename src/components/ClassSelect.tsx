@@ -243,7 +243,11 @@ export function ClassSelect({
                 </div>
               ))}
               <div className="lobby-slot ultimate">
-                <Icon className="lobby-slot-icon" markup={ultimateIconMarkup()} />
+                {selected.ultimate.imageUrl ? (
+                  <img className="lobby-slot-art" src={selected.ultimate.imageUrl} alt="" loading="lazy" draggable={false} />
+                ) : (
+                  <Icon className="lobby-slot-icon" markup={ultimateIconMarkup()} />
+                )}
                 <div className="lobby-slot-body">
                   <div className="lobby-slot-head">
                     <span className="lobby-eyebrow">Ultimate</span>
