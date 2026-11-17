@@ -16,7 +16,8 @@
     "backgrounds": "node scripts/backgrounds.ts",
     "server": "tsx server/index.ts",
     "server:local": "tsx --env-file=.env.server.local server/index.ts",
-    "dev:all": "npm run server:local & npm run dev:sandbox"
+    "dev:all": "npm run server:local & npm run dev:sandbox",
+    "balance": "tsx scripts/balance-sim.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.18.19",
