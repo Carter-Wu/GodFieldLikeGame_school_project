@@ -78,6 +78,15 @@ import {
 } from "./theme.ts";
 import { cardFaceData, drawCardFace, type CardFaceData } from "./cardFace.ts";
 import { confirmDialog } from "../ui/dialog.ts";
+import {
+  RESULT_TEXT,
+  RESULT_TONES,
+  addBlurredSnapshot,
+  addDivider,
+  addResultPanel,
+  addSummaryText,
+  createLobbyButton,
+} from "./resultScreen.ts";
 import { playRoundRecap, setRecapSpeed, type RecapPanel, type RecapSide, type RoundRecapRun } from "./roundRecap.ts";
 
 // 1280x720 board layout: mirrored full-width bands at the top and above the
@@ -298,10 +307,10 @@ function saveLogHidden(hidden: boolean): void {
   }
 }
 
-const RESULT: Record<"win" | "lose" | "draw", { title: string; color: number; sfx: string }> = {
-  win: { title: "VICTORY", color: 0xffd23f, sfx: "victory" },
-  lose: { title: "DEFEAT", color: 0xff5a4f, sfx: "defeat" },
-  draw: { title: "DRAW", color: 0xc9cfe0, sfx: "draw" },
+const RESULT: Record<"win" | "lose" | "draw", { title: string; sfx: string }> = {
+  win: { title: "VICTORY", sfx: "victory" },
+  lose: { title: "DEFEAT", sfx: "defeat" },
+  draw: { title: "DRAW", sfx: "draw" },
 };
 
 const fmt = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -423,6 +432,7 @@ export interface BattleSceneData {
 // One button on the end-of-game screen.
 export interface ResultAction {
   label: string;
+  primary?: boolean; // the gold main-action style; defaults to the first action
   color: number;
   hoverColor: number;
   onClick: () => void;
@@ -1229,130 +1239,156 @@ export class BattleScene extends Phaser.Scene {
   showResult(): void {
     if (this.resultLayer || this.resultDismissed) return;
     const b = this.battle;
-    const result = b.draw ? RESULT.draw : b.winner === b.player ? RESULT.win : RESULT.lose;
+    const kind = b.draw ? "draw" : b.winner === b.player ? "win" : "lose";
+    const result = RESULT[kind];
+    const tone = RESULT_TONES[kind];
     const cx = GAME_WIDTH / 2;
-    const cy = GAME_HEIGHT / 2 - 50;
 
-    const layer = this.add.container(0, 0).setDepth(1000);
+    // Hidden until the board has been snapshotted for the blurred backdrop.
+    const layer = this.add.container(0, 0).setDepth(1000).setVisible(false);
     this.resultLayer = layer;
-    const dim = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x060607, 0.75).setOrigin(0, 0).setInteractive();
+    const dim = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x070709, 0.35).setOrigin(0, 0).setInteractive();
     layer.add(dim);
 
-    if (result === RESULT.win) {
-      // Slowly turning rays behind the title, and falling confetti.
-      const rays = this.add.graphics();
-      rays.fillStyle(result.color, 0.13);
-      for (let i = 0; i < 12; i++) {
-        const a = (i / 12) * Math.PI * 2;
-        const spread = Math.PI / 24;
-        rays.fillTriangle(
-          0,
-          0,
-          Math.cos(a - spread) * 520,
-          Math.sin(a - spread) * 520,
-          Math.cos(a + spread) * 520,
-          Math.sin(a + spread) * 520
-        );
-      }
-      const rayHolder = this.add.container(cx, cy, [rays]).setAlpha(0);
-      layer.add(rayHolder);
-      this.tweens.add({ targets: rayHolder, alpha: 1, duration: 500 });
-      this.tweens.add({ targets: rayHolder, angle: 360, duration: 24000, repeat: -1 });
-
-      const confettiColors = [0xffd23f, 0xffffff, 0x6be39a, 0x6ec6ff, 0xff9d4d];
-      for (let i = 0; i < 60; i++) {
-        const piece = this.add
-          .rectangle(Phaser.Math.Between(0, GAME_WIDTH), Phaser.Math.Between(-300, -10), 6, 10, (confettiColors[i % confettiColors.length] as number))
-          .setAngle(Phaser.Math.Between(0, 360));
-        layer.add(piece);
-        this.tweens.add({
-          targets: piece,
-          y: 800,
-          angle: piece.angle + Phaser.Math.Between(180, 720),
-          x: piece.x + Phaser.Math.Between(-80, 80),
-          delay: Phaser.Math.Between(0, 1500),
-          duration: Phaser.Math.Between(2200, 3600),
-          ease: "Sine.easeIn",
-          onComplete: () => piece.destroy(),
-        });
-      }
-    } else if (result === RESULT.lose) {
-      const shade = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x5a0f0f, 0).setOrigin(0, 0);
-      layer.add(shade);
-      this.tweens.add({ targets: shade, fillAlpha: 0.25, duration: 600 });
-    }
-
+    // Everything on the glass panel, laid out from the panel's top edge.
+    const panel = this.add.container(0, 0);
+    const panelW = 640;
+    let y = 50;
+    const topRule = addDivider(this, cx, y, 320, tone.accent);
+    y += 62;
     const title = this.add
-      .text(cx, cy, result.title, {
-        fontFamily: FONT_FAMILY,
-        fontSize: "88px",
-        fontStyle: "800",
-        color: `#${result.color.toString(16).padStart(6, "0")}`,
-        stroke: "#000000",
-        strokeThickness: 10,
+      .text(cx + 8, y, result.title, {
+        fontFamily: FONT_DISPLAY,
+        fontSize: "70px",
+        fontStyle: "700",
+        color: tone.titleTop,
+        letterSpacing: 16,
+        padding: { x: 24, y: 18 },
       })
       .setOrigin(0.5);
-    const subtitle = this.add
-      .text(cx, cy + 70, this.resultSubtitle(), {
-        fontFamily: FONT_FAMILY,
-        fontSize: "18px",
-        fontStyle: "700",
-        color: TEXT.white,
-        align: "center",
-        wordWrap: { width: 700 },
-      })
-      .setOrigin(0.5, 0);
-    const hp = (f: Fighter): string => `${Math.ceil(f.hp)}/${f.maxHp} HP`;
-    const summary = this.add
-      .text(cx, cy + 102, `You ${hp(b.player)}   ·   ${this.opponentLabel} ${hp(b.cpu)}`, {
-        fontFamily: FONT_FAMILY,
-        fontSize: "14px",
-        color: TEXT.muted,
-      })
-      .setOrigin(0.5, 0);
-    layer.add([title, subtitle, summary]);
+    const gradient = title.context.createLinearGradient(0, title.height * 0.28, 0, title.height * 0.74);
+    gradient.addColorStop(0, tone.titleTop);
+    gradient.addColorStop(1, tone.titleBottom);
+    title.setFill(gradient);
+    title.setShadow(0, 0, tone.glow, 22, false, true);
+    y += 60;
+    const bottomRule = addDivider(this, cx, y, 320, tone.accent);
+    y += 30;
 
-    // The buttons, centered side by side.
+    const summary = addSummaryText(this, cx, y, this.resultSubtitle(), panelW - 120, GOLD_CSS);
+    y += summary.height + 24;
+
+    // HP of both fighters, side by side.
+    const tileW = 250;
+    const tileH = 96;
+    const tileGap = 20;
+    const tiles = [
+      { label: "You", f: b.player },
+      { label: this.displayName(b.cpu), f: b.cpu },
+    ].map(({ label, f }, i) => this.drawResultHpTile(cx - tileW - tileGap / 2 + i * (tileW + tileGap), y, tileW, tileH, label, f));
+    y += tileH + 30;
+
+    // The buttons, centered side by side: the first is the main action.
     const actions = this.resultActions();
-    const buttonW = 160;
-    const gap = 20;
-    const left = cx - (actions.length * buttonW + (actions.length - 1) * gap) / 2;
-    this.resultButtons = actions.map((a, i) =>
-      createButton(this, left + i * (buttonW + gap), cy + 150, buttonW, 44, a.label, {
-        color: a.color,
-        hoverColor: a.hoverColor,
-        onClick: a.onClick,
-      })
-    );
+    const buttonH = 58;
+    const widths = actions.map((a, i) => ((a.primary ?? i === 0) ? 240 : 200));
+    const gap = 18;
+    let bx = cx - (widths.reduce((s, w) => s + w, 0) + gap * (actions.length - 1)) / 2;
+    this.resultButtons = actions.map((a, i) => {
+      const w = widths[i] as number;
+      const button = createLobbyButton(this, bx, y, w, buttonH, a.label, { primary: a.primary ?? i === 0, onClick: a.onClick });
+      bx += w + gap;
+      return button;
+    });
+    y += buttonH + 18;
     const note = this.add
-      .text(cx, cy + 210, "", { fontFamily: FONT_FAMILY, fontSize: "16px", fontStyle: "700", color: TEXT.white, align: "center" })
+      .text(cx, y, "", { fontFamily: FONT_FAMILY, fontSize: "17px", fontStyle: "600", color: RESULT_TEXT.ivory, align: "center" })
       .setOrigin(0.5, 0);
     this.resultNote = note;
-    layer.add([...this.resultButtons.map((b) => b.container), note]);
+    y += 24 + 16;
 
-    // Entrance: a stamp for VICTORY, a heavy drop for DEFEAT, a fade for DRAW.
-    const details: Array<Phaser.GameObjects.Container | Phaser.GameObjects.Text> = [
-      subtitle,
-      summary,
-      ...this.resultButtons.map((b) => b.container),
+    const panelH = y;
+    const top = Math.round((GAME_HEIGHT - panelH) / 2);
+    panel.add([
+      addResultPanel(this, cx - panelW / 2, 0, panelW, panelH, tone),
+      topRule,
+      bottomRule,
+      title,
+      summary.container,
+      ...tiles,
+      ...this.resultButtons.map((btn) => btn.container),
       note,
-    ];
-    details.forEach((o) => o.setAlpha(0));
-    dim.setAlpha(0);
-    this.tweens.add({ targets: dim, alpha: 1, duration: 250 });
-    if (result === RESULT.win) {
-      title.setScale(2.4).setAlpha(0);
-      this.tweens.add({ targets: title, scale: 1, alpha: 1, duration: 420, ease: "Back.easeOut" });
-      this.cameras.main.flash(250, 255, 230, 150);
-    } else if (result === RESULT.lose) {
-      title.setY(cy - 160).setAlpha(0);
-      this.tweens.add({ targets: title, y: cy, alpha: 1, duration: 520, ease: "Bounce.easeOut" });
-    } else {
-      title.setAlpha(0);
-      this.tweens.add({ targets: title, alpha: 1, duration: 500 });
+    ]);
+    panel.setY(top);
+    layer.add(panel);
+
+    // Entrance: the panel rises in, the title settles, then the details.
+    const details: Phaser.GameObjects.GameObject[] = [summary.container, ...tiles, ...this.resultButtons.map((btn) => btn.container), note];
+    let revealed = false;
+    const reveal = (backdrop: Phaser.GameObjects.Image | null): void => {
+      if (revealed || this.resultLayer !== layer) {
+        backdrop?.destroy();
+        return;
+      }
+      revealed = true;
+      if (backdrop) layer.addAt(backdrop, 0);
+      else dim.setFillStyle(0x070709, 0.8);
+      const fadeIn = backdrop ? [dim, backdrop] : [dim];
+      fadeIn.forEach((o) => (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha(0));
+      this.tweens.add({ targets: fadeIn, alpha: 1, duration: 320 });
+      panel.setAlpha(0).setY(top + 18);
+      this.tweens.add({ targets: panel, alpha: 1, y: top, duration: 420, delay: 80, ease: "Cubic.easeOut" });
+      if (kind === "lose") {
+        title.setY(title.y - 14).setAlpha(0);
+        this.tweens.add({ targets: title, y: title.y + 14, alpha: 1, duration: 700, delay: 220, ease: "Cubic.easeOut" });
+      } else {
+        title.setScale(1.08).setAlpha(0);
+        this.tweens.add({ targets: title, scale: 1, alpha: 1, duration: 700, delay: 220, ease: "Cubic.easeOut" });
+      }
+      (details as unknown as Phaser.GameObjects.Components.Alpha[]).forEach((o) => o.setAlpha(0));
+      this.tweens.add({ targets: details, alpha: 1, delay: 520, duration: 360 });
+      layer.setVisible(true);
+      playSfx(result.sfx);
+    };
+    addBlurredSnapshot(this, reveal);
+    this.time.delayedCall(400, () => reveal(null)); // snapshot unavailable or slow
+  }
+
+  // One fighter's HP on the result screen: name, the number, and a thin bar.
+  drawResultHpTile(x: number, y: number, w: number, h: number, label: string, f: Fighter): Phaser.GameObjects.Container {
+    const tile = this.add.container(x, y);
+    const g = this.add.graphics();
+    g.fillStyle(0x08080a, 0.55);
+    g.fillRoundedRect(0, 0, w, h, 12);
+    g.lineStyle(1, 0xffffff, 0.1);
+    g.strokeRoundedRect(0.5, 0.5, w - 1, h - 1, 12);
+    const hp = Math.max(0, Math.ceil(f.hp));
+    const ratio = f.maxHp > 0 ? Math.min(1, hp / f.maxHp) : 0;
+    const barColor = hp === 0 ? 0xc0493d : GOLD;
+    g.fillStyle(0xffffff, 0.08);
+    g.fillRoundedRect(18, h - 18, w - 36, 5, 2.5);
+    if (ratio > 0) {
+      g.fillStyle(barColor, 0.9);
+      g.fillRoundedRect(18, h - 18, Math.max(5, (w - 36) * ratio), 5, 2.5);
     }
-    this.tweens.add({ targets: details, alpha: 1, delay: 450, duration: 300 });
-    playSfx(result.sfx);
+    const name = label.length > 16 ? `${label.slice(0, 15)}…` : label;
+    const labelText = this.add
+      .text(18, 14, name, { fontFamily: FONT_DISPLAY, fontSize: "16px", fontStyle: "700", color: RESULT_TEXT.label, letterSpacing: 2 })
+      .setOrigin(0, 0);
+    const value = this.add
+      .text(18, 36, String(hp), { fontFamily: FONT_NUM, fontSize: "34px", fontStyle: "700", color: hp === 0 ? "#ec8a7c" : GOLD_CSS })
+      .setOrigin(0, 0);
+    value.setShadow(0, 0, hp === 0 ? "#b83a30" : "#e2c588", 6, false, true);
+    const max = this.add
+      .text(18 + value.width + 6, 36 + value.height - 8, `/ ${f.maxHp} HP`, {
+        fontFamily: FONT_NUM,
+        fontSize: "19px",
+        fontStyle: "600",
+        color: RESULT_TEXT.soft,
+      })
+      .setOrigin(0, 1);
+    tile.add([g, labelText, value, max]);
+    return tile;
   }
 
   hideResult(): void {
